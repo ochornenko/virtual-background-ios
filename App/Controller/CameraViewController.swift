@@ -31,7 +31,7 @@ class CameraViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        self.cameraController = CameraController()
+        self.cameraController = CameraController(cameraProcessor: CameraVirtualBackgroundProcessor())
         
         setup()
     }
@@ -46,7 +46,7 @@ class CameraViewController: UIViewController {
                 switch self.cameraController.startRunning() {
                 case .success:
                     self.addObservers()
-                case .configurationFailed:
+                case .failed:
                     self.showCameraDisabledAlert()
                 }
             } else {

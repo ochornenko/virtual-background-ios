@@ -40,7 +40,7 @@ class CameraPreview: MTKView {
         return try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
     }()
     
-    private lazy var sampler: MTLSamplerState? = {
+    private lazy var samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.sAddressMode = .clampToEdge
         samplerDescriptor.tAddressMode = .clampToEdge
@@ -116,16 +116,16 @@ class CameraPreview: MTKView {
               let commandBuffer = commandQueue.makeCommandBuffer(),
               let commandEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: currentRenderPassDescriptor),
               let renderPipelineState = renderPipelineState,
-              let sampler = sampler else {
+              let samplerState = samplerState else {
             return
         }
         
-        commandEncoder.label = "Preview display"
+        commandEncoder.label = "Preview"
         commandEncoder.setRenderPipelineState(renderPipelineState)
         commandEncoder.setVertexBuffer(vertexCoordBuffer, offset: 0, index: 0)
         commandEncoder.setVertexBuffer(textCoordBuffer, offset: 0, index: 1)
         commandEncoder.setFragmentTexture(texture, index: 0)
-        commandEncoder.setFragmentSamplerState(sampler, index: 0)
+        commandEncoder.setFragmentSamplerState(samplerState, index: 0)
         commandEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         commandEncoder.endEncoding()
         

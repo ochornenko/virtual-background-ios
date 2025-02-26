@@ -11,7 +11,7 @@ class CameraController: NSObject {
     
     enum SessionSetupResult {
         case success
-        case configurationFailed
+        case failed
     }
     
     weak var cameraPreview: CameraPreview?
@@ -26,10 +26,6 @@ class CameraController: NSObject {
     
     private let cameraVideoDataOutput = AVCaptureVideoDataOutput()
     
-    private var microphoneDeviceInput: AVCaptureDeviceInput?
-    
-    private let microphoneAudioDataOutput = AVCaptureAudioDataOutput()
-    
     private var setupResult: SessionSetupResult = .success
     
     private var isSessionRunning = false
@@ -39,6 +35,12 @@ class CameraController: NSObject {
     private var videoTrackSourceFormatDescription: CMFormatDescription?
     
     private(set) var cameraDeviceInput: AVCaptureDeviceInput?
+    
+    private var cameraProcessor: CameraProcessor?
+    
+    init(cameraProcessor: CameraProcessor?) {
+        self.cameraProcessor = cameraProcessor
+    }
     
     /// Configures the overall camera
     public func configure() {
@@ -117,13 +119,12 @@ extension CameraController {
         }
         
         guard configureCamera() else {
-            setupResult = .configurationFailed
+            setupResult = .failed
             return
         }
     }
     
     func configureCamera() -> Bool {
-        // Find the camera
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: devicePosition) else {
             Log.error("Could not find the camera")
             return false
@@ -183,7 +184,6 @@ extension CameraController {
 // MARK: Camera Capture Delegates
 
 extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
-    
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         dataOutputQueue.async {
             if let videoDataOutput = output as? AVCaptureVideoDataOutput {
@@ -202,7 +202,11 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
         }
         
         if videoDataOutput == cameraVideoDataOutput {
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                return
+            }
+            
+            guard let pixelBuffer = cameraProcessor?.process(imageBuffer) else {
                 return
             }
             
