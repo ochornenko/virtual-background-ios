@@ -15,7 +15,18 @@ class CameraPreview: MTKView {
     
     var mirroring = false
     var rotation: Rotation = .rotate0Degrees
-    var pixelBuffer: CVPixelBuffer?
+    var pixelBuffer: CVPixelBuffer? {
+        get {
+            return syncQueue.sync { _pixelBuffer }
+        }
+        set {
+            syncQueue.async(flags: .barrier) {
+                self._pixelBuffer = newValue
+            }
+        }
+    }
+    
+    private var _pixelBuffer: CVPixelBuffer?
     
     private let syncQueue = DispatchQueue(label: "Preview.SyncQueue", attributes: .concurrent)
     
@@ -75,10 +86,6 @@ class CameraPreview: MTKView {
     }
     
     override func draw(_ rect: CGRect) {
-        let (pixelBuffer, mirroring, rotation) = syncQueue.sync {
-            (self.pixelBuffer, self.mirroring, self.rotation)
-        }
-        
         guard let drawable = currentDrawable,
               let currentRenderPassDescriptor = currentRenderPassDescriptor,
               let previewPixelBuffer = pixelBuffer,
