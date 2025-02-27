@@ -6,16 +6,33 @@
 //
 
 import AVFoundation
+import PhotosUI
 import UIKit
 
 class CameraViewController: UIViewController {
     
     private var cameraController: CameraController!
     
+    private var selection = [String: PHPickerResult]()
+    private var selectedAssetIdentifiers = [String]()
+    private var selectedAssetIdentifierIterator: IndexingIterator<[String]>?
+    private var currentAssetIdentifier: String?
+    
     private lazy var cameraPreview: CameraPreview = {
         let preview = CameraPreview(frame: self.view.frame)
         preview.translatesAutoresizingMaskIntoConstraints = false
         return preview
+    }()
+    
+    private lazy var imagePickerButton: UIButton = {
+        let button = UIButton(type: .system)
+        let image = UIImage(systemName: "photo")
+        let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
+        button.setImage(image?.withConfiguration(config), for: .normal)
+        button.tintColor = .white
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.addTarget(self, action: #selector(presentPickerForImages), for: .touchUpInside)
+        return button
     }()
     
     private lazy var cameraUnavailableLabel: UILabel = {
@@ -73,6 +90,13 @@ class CameraViewController: UIViewController {
         
         cameraController.cameraPreview = cameraPreview
         
+        self.view.addSubview(imagePickerButton)
+        
+        NSLayoutConstraint.activate([
+            imagePickerButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            view.trailingAnchor.constraint(equalTo: imagePickerButton.trailingAnchor, constant: 15)
+        ])
+        
         self.view.addSubview(cameraUnavailableLabel)
         
         cameraUnavailableLabel.centerXAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.centerXAnchor).isActive = true
@@ -118,6 +142,25 @@ class CameraViewController: UIViewController {
             
             self.present(alertController, animated: true, completion: nil)
         }
+    }
+    
+    private func presentPicker(filter: PHPickerFilter?) {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        
+        // Set the filter type according to the user’s selection.
+        configuration.filter = filter
+        // Set the mode to avoid transcoding, if possible, if your app supports arbitrary image/video encodings.
+        configuration.preferredAssetRepresentationMode = .current
+        // Set the selection behavior to respect the user’s selection order.
+        configuration.selection = .ordered
+        // Set the selection limit to enable multiselection.
+        configuration.selectionLimit = 1
+        // Set the preselected asset identifiers with the identifiers that the app tracks.
+        configuration.preselectedAssetIdentifiers = selectedAssetIdentifiers
+        
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        present(picker, animated: true)
     }
     
     @objc
@@ -172,6 +215,11 @@ class CameraViewController: UIViewController {
         }
     }
     
+    @objc
+    private func presentPickerForImages(_ sender: Any) {
+        presentPicker(filter: PHPickerFilter.images)
+    }
+    
     // MARK: Notifications
     private func addObservers() {
         NotificationCenter.default.addObserver(self,
@@ -206,5 +254,50 @@ class CameraViewController: UIViewController {
     
     private func removeObservers() {
         NotificationCenter.default.removeObserver(self)
+    }
+}
+
+private extension CameraViewController {
+    func displayNext() {
+        guard let assetIdentifier = selectedAssetIdentifierIterator?.next() else { return }
+        currentAssetIdentifier = assetIdentifier
+        
+        let itemProvider = selection[assetIdentifier]!.itemProvider
+        if itemProvider.canLoadObject(ofClass: UIImage.self) {
+            itemProvider.loadObject(ofClass: UIImage.self) { [weak self] image, error in
+                DispatchQueue.main.async {
+                    self?.handleCompletion(assetIdentifier: assetIdentifier, object: image, error: error)
+                }
+            }
+        }
+    }
+    
+    func handleCompletion(assetIdentifier: String, object: Any?, error: Error? = nil) {
+        guard currentAssetIdentifier == assetIdentifier else { return }
+        if let image = (object as? UIImage)?.cgImage {
+            cameraController.setImage(cgImega: rotateIfNeeded(image))
+        }
+    }
+}
+
+extension CameraViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        dismiss(animated: true)
+        
+        let existingSelection = self.selection
+        var newSelection = [String: PHPickerResult]()
+        for result in results {
+            let identifier = result.assetIdentifier!
+            newSelection[identifier] = existingSelection[identifier] ?? result
+        }
+        
+        // Track the selection in case the user deselects it later.
+        selection = newSelection
+        selectedAssetIdentifiers = results.map(\.assetIdentifier!)
+        selectedAssetIdentifierIterator = selectedAssetIdentifiers.makeIterator()
+        
+        if !selection.isEmpty {
+            displayNext()
+        }
     }
 }

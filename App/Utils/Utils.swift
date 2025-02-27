@@ -82,3 +82,82 @@ public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer,
     }
     return dstPixelBuffer
 }
+
+private let textureLoader: MTKTextureLoader = {
+    return MTKTextureLoader(device: MTLCreateSystemDefaultDevice()!)
+}()
+
+/**
+ Loads a texture from the specified image.
+ */
+public func loadTexture(image: CGImage) -> MTLTexture? {
+    do {
+        return try textureLoader.newTexture(cgImage: image, options: [
+            MTKTextureLoader.Option.SRGB : NSNumber(value: false)
+        ])
+    } catch {
+        Log.error("Error: could not load texture \(error)")
+        return nil
+    }
+}
+
+public func resizeCGImageToFit(_ inputCGImage: CGImage, targetWidth: Int, targetHeight: Int) -> CGImage? {
+    let scaleFactor = CGFloat(targetWidth) / CGFloat(inputCGImage.width)
+    let newHeight = Int(CGFloat(inputCGImage.height) * scaleFactor)
+    
+    let context = CGContext(
+        data: nil,
+        width: targetWidth,
+        height: targetHeight,
+        bitsPerComponent: inputCGImage.bitsPerComponent,
+        bytesPerRow: 0,
+        space: inputCGImage.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: inputCGImage.bitmapInfo.rawValue
+    )
+    
+    guard let context = context else { return nil }
+    
+    // Fill background with black
+    context.setFillColor(UIColor.black.cgColor)
+    context.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+    
+    // Draw the resized image centered vertically
+    let originY = (targetHeight - newHeight) / 2
+    context.draw(inputCGImage, in: CGRect(x: 0, y: originY, width: targetWidth, height: newHeight))
+    
+    return context.makeImage()
+}
+
+public func rotateIfNeeded(_ image: CGImage) -> CGImage {
+    return image.width > image.height ? rotateCGImage(image, degrees: 270) ?? image : image
+}
+
+private func rotateCGImage(_ image: CGImage, degrees: CGFloat) -> CGImage? {
+    let radians = degrees * (.pi / 180)
+    
+    // Swap width and height for 90° / 270° rotations
+    let newWidth = degrees == 90 || degrees == 270 ? image.height : image.width
+    let newHeight = degrees == 90 || degrees == 270 ? image.width : image.height
+    
+    let context = CGContext(
+        data: nil,
+        width: newWidth,
+        height: newHeight,
+        bitsPerComponent: image.bitsPerComponent,
+        bytesPerRow: 0,
+        space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: image.bitmapInfo.rawValue
+    )
+    
+    guard let context = context else { return nil }
+    
+    // Move origin to center for proper rotation
+    context.translateBy(x: CGFloat(newWidth) / 2, y: CGFloat(newHeight) / 2)
+    context.rotate(by: radians)
+    
+    // Draw the image centered after rotation
+    context.translateBy(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2)
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    
+    return context.makeImage()
+}

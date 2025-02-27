@@ -10,6 +10,7 @@ import MetalKit
 
 protocol CameraProcessor {
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
+    func setImage(cgImega: CGImage)
 }
 
 class CameraVirtualBackgroundProcessor: CameraProcessor {
@@ -152,6 +153,12 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
         
         return nil
+    }
+    
+    func setImage(cgImega: CGImage) {
+        if let imega = resizeCGImageToFit(cgImega, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
+            self.backgroundTexture = loadTexture(image: imega)
+        }
     }
     
     private func render(pixelBuffer: CVPixelBuffer?) -> MTLTexture? {

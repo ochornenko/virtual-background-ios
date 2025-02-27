@@ -87,6 +87,10 @@ class CameraController: NSObject {
             self.renderingEnabled = false
         }
     }
+    
+    public func setImage(cgImega: CGImage) {
+        self.cameraProcessor?.setImage(cgImega: cgImega)
+    }
 }
 
 // MARK: Camera Pipeline Configuration
