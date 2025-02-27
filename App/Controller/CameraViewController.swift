@@ -35,6 +35,14 @@ class CameraViewController: UIViewController {
         return button
     }()
     
+    private lazy var fpsLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.textAlignment = .left
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
     private lazy var cameraUnavailableLabel: UILabel = {
         let label = UILabel()
         label.text = "Camera Unavailable"
@@ -49,6 +57,7 @@ class CameraViewController: UIViewController {
         super.viewDidLoad()
         
         self.cameraController = CameraController(cameraProcessor: CameraVirtualBackgroundProcessor())
+        self.cameraController.fpsDelegate = self
         
         setup()
     }
@@ -95,6 +104,13 @@ class CameraViewController: UIViewController {
         NSLayoutConstraint.activate([
             imagePickerButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             view.trailingAnchor.constraint(equalTo: imagePickerButton.trailingAnchor, constant: 15)
+        ])
+        
+        self.view.addSubview(fpsLabel)
+        
+        NSLayoutConstraint.activate([
+            fpsLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            fpsLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15)
         ])
         
         self.view.addSubview(cameraUnavailableLabel)
@@ -254,6 +270,16 @@ class CameraViewController: UIViewController {
     
     private func removeObservers() {
         NotificationCenter.default.removeObserver(self)
+    }
+}
+
+// MARK: FPS delegate
+
+extension CameraViewController: FpsDelegate {
+    func didUpdateFps(_ fps: Double) {
+        DispatchQueue.main.async {
+            self.fpsLabel.text = String(format: "FPS: %.2f", fps)
+        }
     }
 }
 

@@ -7,6 +7,10 @@
 
 import AVFoundation
 
+protocol FpsDelegate: AnyObject {
+    func didUpdateFps(_ fps: Double)
+}
+
 class CameraController: NSObject {
     
     enum SessionSetupResult {
@@ -32,11 +36,17 @@ class CameraController: NSObject {
     
     private var renderingEnabled = true
     
+    private var lastFpsTimestamp: TimeInterval = CACurrentMediaTime()
+    
+    private var frameCount = 0
+    
     private var videoTrackSourceFormatDescription: CMFormatDescription?
     
     private(set) var cameraDeviceInput: AVCaptureDeviceInput?
     
     private var cameraProcessor: CameraProcessor?
+    
+    weak var fpsDelegate: FpsDelegate?
     
     init(cameraProcessor: CameraProcessor?) {
         self.cameraProcessor = cameraProcessor
@@ -190,6 +200,20 @@ extension CameraController {
 extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         dataOutputQueue.async {
+            let currentTime = CACurrentMediaTime()
+            let elapsedTime = currentTime - self.lastFpsTimestamp
+            
+            self.frameCount += 1
+            
+            if elapsedTime >= 1.0 { // Update FPS every second
+                let fps = Double(self.frameCount) / elapsedTime
+                
+                self.fpsDelegate?.didUpdateFps(fps)
+                
+                self.frameCount = 0
+                self.lastFpsTimestamp = currentTime
+            }
+            
             if let videoDataOutput = output as? AVCaptureVideoDataOutput {
                 self.processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
             }
