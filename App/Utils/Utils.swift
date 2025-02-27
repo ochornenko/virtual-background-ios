@@ -128,36 +128,15 @@ public func resizeCGImageToFit(_ inputCGImage: CGImage, targetWidth: Int, target
     return context.makeImage()
 }
 
-public func rotateIfNeeded(_ image: CGImage) -> CGImage {
-    return image.width > image.height ? rotateCGImage(image, degrees: 270) ?? image : image
-}
-
-private func rotateCGImage(_ image: CGImage, degrees: CGFloat) -> CGImage? {
-    let radians = degrees * (.pi / 180)
+public func rotateIfNeeded(_ image: UIImage?) -> UIImage? {
+    guard let image = image, image.imageOrientation != .up else {
+        return image
+    }
     
-    // Swap width and height for 90° / 270° rotations
-    let newWidth = degrees == 90 || degrees == 270 ? image.height : image.width
-    let newHeight = degrees == 90 || degrees == 270 ? image.width : image.height
+    UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
+    image.draw(in: CGRect(origin: .zero, size: image.size))
+    let rotatedImage = UIGraphicsGetImageFromCurrentImageContext()
+    UIGraphicsEndImageContext()
     
-    let context = CGContext(
-        data: nil,
-        width: newWidth,
-        height: newHeight,
-        bitsPerComponent: image.bitsPerComponent,
-        bytesPerRow: 0,
-        space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: image.bitmapInfo.rawValue
-    )
-    
-    guard let context = context else { return nil }
-    
-    // Move origin to center for proper rotation
-    context.translateBy(x: CGFloat(newWidth) / 2, y: CGFloat(newHeight) / 2)
-    context.rotate(by: radians)
-    
-    // Draw the image centered after rotation
-    context.translateBy(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2)
-    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-    
-    return context.makeImage()
+    return rotatedImage ?? image
 }

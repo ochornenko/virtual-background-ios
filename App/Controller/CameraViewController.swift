@@ -274,8 +274,8 @@ private extension CameraViewController {
     
     func handleCompletion(assetIdentifier: String, object: Any?, error: Error? = nil) {
         guard currentAssetIdentifier == assetIdentifier else { return }
-        if let image = (object as? UIImage)?.cgImage {
-            cameraController.setImage(cgImega: rotateIfNeeded(image))
+        if let cgImega = rotateIfNeeded(object as? UIImage)?.cgImage {
+            cameraController.setImage(cgImega: cgImega)
         }
     }
 }
