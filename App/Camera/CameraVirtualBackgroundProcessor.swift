@@ -156,7 +156,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     func setImage(cgImega: CGImage) {
-        if let imega = resizeCGImageToFit(cgImega, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
+        if let imega = resizeCGImageToFill(cgImega, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
             self.backgroundTexture = loadTexture(image: imega)
         }
     }

@@ -101,29 +101,39 @@ public func loadTexture(image: CGImage) -> MTLTexture? {
     }
 }
 
-public func resizeCGImageToFit(_ inputCGImage: CGImage, targetWidth: Int, targetHeight: Int) -> CGImage? {
-    let scaleFactor = CGFloat(targetWidth) / CGFloat(inputCGImage.width)
+public func resizeCGImageToFill(_ inputCGImage: CGImage, targetWidth: Int, targetHeight: Int) -> CGImage? {
+    let widthScale = CGFloat(targetWidth) / CGFloat(inputCGImage.width)
+    let heightScale = CGFloat(targetHeight) / CGFloat(inputCGImage.height)
+    let scaleFactor = max(widthScale, heightScale) // Ensure the image fills the target size
+    
+    let newWidth = Int(CGFloat(inputCGImage.width) * scaleFactor)
     let newHeight = Int(CGFloat(inputCGImage.height) * scaleFactor)
     
-    let context = CGContext(
+    // Ensure a valid color space
+    let colorSpace = inputCGImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+    
+    // Use a compatible bitmap info
+    let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+    
+    guard let context = CGContext(
         data: nil,
         width: targetWidth,
         height: targetHeight,
-        bitsPerComponent: inputCGImage.bitsPerComponent,
-        bytesPerRow: 0,
-        space: inputCGImage.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: inputCGImage.bitmapInfo.rawValue
-    )
+        bitsPerComponent: 8, // 8-bit per component (standard for ARGB)
+        bytesPerRow: 0, // Automatically determined
+        space: colorSpace,
+        bitmapInfo: bitmapInfo
+    ) else {
+        return nil
+    }
     
-    guard let context = context else { return nil }
+    // Calculate cropping offset to center the image
+    let xOffset = (newWidth - targetWidth) / 2
+    let yOffset = (newHeight - targetHeight) / 2
+    let drawRect = CGRect(x: -xOffset, y: -yOffset, width: newWidth, height: newHeight)
     
-    // Fill background with black
-    context.setFillColor(UIColor.black.cgColor)
-    context.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-    
-    // Draw the resized image centered vertically
-    let originY = (targetHeight - newHeight) / 2
-    context.draw(inputCGImage, in: CGRect(x: 0, y: originY, width: targetWidth, height: newHeight))
+    // Draw the image to fill the entire context
+    context.draw(inputCGImage, in: drawRect)
     
     return context.makeImage()
 }
