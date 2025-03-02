@@ -18,17 +18,16 @@ struct MixParams {
  The position should be normalized between 0 and 1.
  */
 static inline int get_class(float2 pos, int width, int height, device int* mask) {
-    const int x = int(pos.x * width);
-    const int y = int(pos.y * height);
+    const int x = clamp(int(pos.x * width), 0, width - 1);
+    const int y = clamp(int(pos.y * height), 0, height - 1);
     return mask[y * width + x];
 }
 
 /*
- Returns the probability that the specified pixel coordinate contains the
- class "person". The position should be normalized between 0 and 1.
+ Returns true if the specified pixel coordinate contains the class "person".
  */
-static float get_person_probability(float2 pos, int width, int height, device int* mask) {
-    return get_class(pos, width, height, mask) == 15;
+static inline bool is_person_at(float2 position, int width, int height, device int* mask) {
+    return get_class(position, width, height, mask) == 15;
 }
 
 kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(0) ]],
@@ -38,22 +37,28 @@ kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(
                   constant MixParams& params [[buffer(1)]],
                   uint2 gid [[thread_position_in_grid]]) {
     
-    if (gid.x >= inputTexture.get_width() || gid.y >= inputTexture.get_height()) return;
+    // Ensure the thread is within the bounds of the output texture
+    if (gid.x >= outputTexture.get_width() || gid.y >= outputTexture.get_height()) return;
     
+    // Define a sampler for texture sampling
     constexpr sampler s(coord::normalized, address::clamp_to_zero, filter::linear);
     
-    const float2 pos = float2(float(gid.x) / float(outputTexture.get_width()),
-                              float(gid.y) / float(outputTexture.get_height()));
-    const float is_person = get_person_probability(pos, params.segmentationWidth, params.segmentationHeight, segmentationMask);
+    // Use output resolution for normalized position
+    const float2 position = float2(float(gid.x) / float(outputTexture.get_width()),
+                                   float(gid.y) / float(outputTexture.get_height()));
     
+    // Get the probability that the current pixel contains a person
+    const float is_person = is_person_at(position, params.segmentationWidth, params.segmentationHeight, segmentationMask);
+    
+    // Read the input pixel
     const float4 inPixel = inputTexture.read(gid);
     float4 outPixel = inPixel;
     
-    if (is_person < 0.5f) {
-        // Use a sampler so that the background texture doesn't have to be the same size as the input texture.
-        outPixel = backgroundTexture.sample(s, float2(float(gid.x) / float(inputTexture.get_width()),
-                                                      float(gid.y) / float(inputTexture.get_height())));
+    if (!is_person) {
+        // If the pixel does not contain a person, use the background texture
+        outPixel = backgroundTexture.sample(s, position);
     }
     
+    // Write the output pixel
     outputTexture.write(outPixel, gid);
 }

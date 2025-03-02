@@ -9,8 +9,7 @@
 using namespace metal;
 
 // Vertex input/output structure for passing results from vertex shader to fragment shader
-struct VertexIO
-{
+struct VertexIO {
     float4 position [[position]];
     float2 textureCoord [[user(texturecoord)]];
 };
@@ -18,10 +17,10 @@ struct VertexIO
 // Vertex shader for a textured quad
 vertex VertexIO vertexPassThrough(const device packed_float4 *pPosition [[ buffer(0) ]],
                                   const device packed_float2 *pTexCoords [[ buffer(1) ]],
-                                  uint vid [[ vertex_id ]])
-{
+                                  uint vid [[ vertex_id ]]) {
     VertexIO outVertex;
     
+    // Assign position and texture coordinates from the input buffers
     outVertex.position = pPosition[vid];
     outVertex.textureCoord = pTexCoords[vid];
     
@@ -31,7 +30,7 @@ vertex VertexIO vertexPassThrough(const device packed_float4 *pPosition [[ buffe
 // Fragment shader for a textured quad
 fragment half4 fragmentPassThrough(VertexIO inputFragment [[ stage_in ]],
                                    texture2d<half> inputTexture [[ texture(0) ]],
-                                   sampler samplr [[ sampler(0) ]])
-{
+                                   sampler samplr [[ sampler(0) ]]) {
+    // Sample the texture at the given texture coordinates
     return inputTexture.sample(samplr, inputFragment.textureCoord);
 }
