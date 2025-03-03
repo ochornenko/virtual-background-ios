@@ -149,7 +149,7 @@ class CameraViewController: UIViewController {
                                                     handler: nil))
             
             alertController.addAction(UIAlertAction(title: NSLocalizedString("Settings", comment: "Alert button to open Settings"),
-                                                    style: .`default`,
+                                                    style: .default,
                                                     handler: { _ in
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(settingsURL, options: [:], completionHandler: nil)
@@ -300,8 +300,8 @@ private extension CameraViewController {
     
     func handleCompletion(assetIdentifier: String, object: Any?, error: Error? = nil) {
         guard currentAssetIdentifier == assetIdentifier else { return }
-        if let cgImega = rotateIfNeeded(object as? UIImage)?.cgImage {
-            cameraController.setImage(cgImega: cgImega)
+        if let cgImage = rotateIfNeeded(object as? UIImage)?.cgImage {
+            cameraController.setImage(cgImage: cgImage)
         }
     }
 }
@@ -313,13 +313,13 @@ extension CameraViewController: PHPickerViewControllerDelegate {
         let existingSelection = self.selection
         var newSelection = [String: PHPickerResult]()
         for result in results {
-            let identifier = result.assetIdentifier!
+            guard let identifier = result.assetIdentifier else { continue }
             newSelection[identifier] = existingSelection[identifier] ?? result
         }
         
         // Track the selection in case the user deselects it later.
         selection = newSelection
-        selectedAssetIdentifiers = results.map(\.assetIdentifier!)
+        selectedAssetIdentifiers = results.compactMap { $0.assetIdentifier }
         selectedAssetIdentifierIterator = selectedAssetIdentifiers.makeIterator()
         
         if !selection.isEmpty {

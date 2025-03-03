@@ -98,8 +98,8 @@ class CameraController: NSObject {
         }
     }
     
-    public func setImage(cgImega: CGImage) {
-        self.cameraProcessor?.setImage(cgImega: cgImega)
+    public func setImage(cgImage: CGImage) {
+        self.cameraProcessor?.setImage(cgImage: cgImage)
     }
 }
 
@@ -113,10 +113,6 @@ extension CameraController {
          Configure the capture session.
          In general it is not safe to mutate an AVCaptureSession or any of its
          inputs, outputs, or connections from multiple threads at the same time.
-         
-         Don't do this on the main queue, because AVCaptureMultiCamSession.startRunning()
-         is a blocking call, which can take a long time. Dispatch session setup
-         to the sessionQueue so as not to block the main queue, which keeps the UI responsive.
          */
         sessionQueue.async {
             self.configureSession()
@@ -199,24 +195,22 @@ extension CameraController {
 
 extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        dataOutputQueue.async {
-            let currentTime = CACurrentMediaTime()
-            let elapsedTime = currentTime - self.lastFpsTimestamp
+        let currentTime = CACurrentMediaTime()
+        let elapsedTime = currentTime - self.lastFpsTimestamp
+        
+        self.frameCount += 1
+        
+        if elapsedTime >= 1.0 { // Update FPS every second
+            let fps = Double(self.frameCount) / elapsedTime
             
-            self.frameCount += 1
+            self.fpsDelegate?.didUpdateFps(fps)
             
-            if elapsedTime >= 1.0 { // Update FPS every second
-                let fps = Double(self.frameCount) / elapsedTime
-                
-                self.fpsDelegate?.didUpdateFps(fps)
-                
-                self.frameCount = 0
-                self.lastFpsTimestamp = currentTime
-            }
-            
-            if let videoDataOutput = output as? AVCaptureVideoDataOutput {
-                self.processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
-            }
+            self.frameCount = 0
+            self.lastFpsTimestamp = currentTime
+        }
+        
+        if let videoDataOutput = output as? AVCaptureVideoDataOutput {
+            self.processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
         }
     }
     

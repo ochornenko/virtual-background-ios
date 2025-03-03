@@ -10,7 +10,7 @@ import MetalKit
 
 protocol CameraProcessor {
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
-    func setImage(cgImega: CGImage)
+    func setImage(cgImage: CGImage)
 }
 
 class CameraVirtualBackgroundProcessor: CameraProcessor {
@@ -64,7 +64,6 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
         
         device = metalDevice
-        
         commandQueue = queue
         
         // Create the metal library containing the shaders
@@ -109,55 +108,56 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-        guard backgroundTexture != nil else {
+        guard let backgroundTexture = backgroundTexture else {
             return framePixelBuffer
         }
         
-        if let resizedInput = resizePixelBuffer(framePixelBuffer, width: segmentationWidth, height: segmentationHeight),
-           let output = try? model?.prediction(image: resizedInput) {
-            
-            segmentationMaskBuffer = self.device.makeBuffer(length: segmentationHeight * segmentationWidth * MemoryLayout<Int32>.stride)
-            
-            if let buffer = self.segmentationMaskBuffer {
-                memcpy(buffer.contents(), output.semanticPredictions.dataPointer, buffer.length)
-            }
-            
-            if let targetTexture = render(pixelBuffer: framePixelBuffer) {
-                var pixelBuffer: CVPixelBuffer?
-                let bytesPerRow = bytesPerPixel * targetTexture.width
-                let region = MTLRegionMake2D(0, 0, targetTexture.width, targetTexture.height)
-                targetTexture.getBytes(&pixelData, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
-                
-                let status = CVPixelBufferCreate(kCFAllocatorDefault,
-                                                 Int(videoSize.width),
-                                                 Int(videoSize.height),
-                                                 kCVPixelFormatType_32BGRA,
-                                                 [kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary,
-                                                 &pixelBuffer)
-                
-                guard status == kCVReturnSuccess, let pixelBuffer = pixelBuffer else {
-                    Log.error("Failed to create pixel buffer \(status)")
-                    return nil
-                }
-                
-                let flags = CVPixelBufferLockFlags(rawValue: 0)
-                
-                CVPixelBufferLockBaseAddress(pixelBuffer, flags)
-                
-                memcpy(CVPixelBufferGetBaseAddress(pixelBuffer), pixelData, Int(videoSize.height) * bytesPerRow)
-                
-                CVPixelBufferUnlockBaseAddress(pixelBuffer, flags)
-                
-                return pixelBuffer
-            }
+        guard let resizedInput = resizePixelBuffer(framePixelBuffer, width: segmentationWidth, height: segmentationHeight),
+              let output = try? model?.prediction(image: resizedInput) else {
+            return nil
         }
         
-        return nil
+        segmentationMaskBuffer = self.device.makeBuffer(length: segmentationHeight * segmentationWidth * MemoryLayout<Int32>.stride)
+        
+        if let buffer = self.segmentationMaskBuffer {
+            memcpy(buffer.contents(), output.semanticPredictions.dataPointer, buffer.length)
+        }
+        
+        guard let targetTexture = render(pixelBuffer: framePixelBuffer) else {
+            return nil
+        }
+        
+        var pixelBuffer: CVPixelBuffer?
+        let bytesPerRow = bytesPerPixel * targetTexture.width
+        let region = MTLRegionMake2D(0, 0, targetTexture.width, targetTexture.height)
+        targetTexture.getBytes(&pixelData, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
+        
+        let status = CVPixelBufferCreate(kCFAllocatorDefault,
+                                         Int(videoSize.width),
+                                         Int(videoSize.height),
+                                         kCVPixelFormatType_32BGRA,
+                                         [kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary,
+                                         &pixelBuffer)
+        
+        guard status == kCVReturnSuccess, let pixelBuffer = pixelBuffer else {
+            Log.error("Failed to create pixel buffer \(status)")
+            return nil
+        }
+        
+        let flags = CVPixelBufferLockFlags(rawValue: 0)
+        
+        CVPixelBufferLockBaseAddress(pixelBuffer, flags)
+        
+        memcpy(CVPixelBufferGetBaseAddress(pixelBuffer), pixelData, Int(videoSize.height) * bytesPerRow)
+        
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, flags)
+        
+        return pixelBuffer
     }
     
-    func setImage(cgImega: CGImage) {
-        if let imega = resizeCGImageToFill(cgImega, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
-            self.backgroundTexture = loadTexture(image: imega)
+    func setImage(cgImage: CGImage) {
+        if let image = resizeCGImageToFill(cgImage, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
+            self.backgroundTexture = loadTexture(image: image)
         }
     }
     
