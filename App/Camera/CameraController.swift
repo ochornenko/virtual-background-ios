@@ -18,8 +18,6 @@ class CameraController: NSObject {
         case failed
     }
     
-    weak var cameraPreview: CameraPreview?
-    
     private let devicePosition: AVCaptureDevice.Position = .front
     
     private let captureSession = AVCaptureSession()
@@ -29,6 +27,12 @@ class CameraController: NSObject {
     private let dataOutputQueue = DispatchQueue(label: "Data.Output.Queue")
     
     private let cameraVideoDataOutput = AVCaptureVideoDataOutput()
+    
+    private var videoTrackSourceFormatDescription: CMFormatDescription?
+    
+    private var cameraDeviceInput: AVCaptureDeviceInput?
+    
+    private var cameraProcessor: CameraProcessor?
     
     private var setupResult: SessionSetupResult = .success
     
@@ -40,13 +44,9 @@ class CameraController: NSObject {
     
     private var frameCount = 0
     
-    private var videoTrackSourceFormatDescription: CMFormatDescription?
-    
-    private(set) var cameraDeviceInput: AVCaptureDeviceInput?
-    
-    private var cameraProcessor: CameraProcessor?
-    
     weak var fpsDelegate: FpsDelegate?
+    
+    weak var cameraPreview: CameraPreview?
     
     init(cameraProcessor: CameraProcessor?) {
         self.cameraProcessor = cameraProcessor

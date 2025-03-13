@@ -108,7 +108,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-        guard let backgroundTexture = backgroundTexture else {
+        guard backgroundTexture != nil else {
             return framePixelBuffer
         }
         

@@ -19,7 +19,7 @@ class CameraViewController: UIViewController {
     private var currentAssetIdentifier: String?
     
     private lazy var cameraPreview: CameraPreview = {
-        let preview = CameraPreview(frame: self.view.frame)
+        let preview = CameraPreview(frame: view.frame)
         preview.translatesAutoresizingMaskIntoConstraints = false
         return preview
     }()
@@ -56,10 +56,7 @@ class CameraViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        self.cameraController = CameraController(cameraProcessor: CameraVirtualBackgroundProcessor())
-        self.cameraController.fpsDelegate = self
-        
-        setup()
+        initialize()
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -87,8 +84,15 @@ class CameraViewController: UIViewController {
         super.viewWillDisappear(animated)
     }
     
-    private func setup() {
-        self.view.addSubview(cameraPreview)
+    private func initialize() {
+        cameraController = CameraController(cameraProcessor: CameraVirtualBackgroundProcessor())
+        cameraController.fpsDelegate = self
+        
+        configureView()
+    }
+    
+    private func configureView() {
+        view.addSubview(cameraPreview)
         
         NSLayoutConstraint.activate([
             cameraPreview.topAnchor.constraint(equalTo: view.topAnchor),
@@ -99,24 +103,24 @@ class CameraViewController: UIViewController {
         
         cameraController.cameraPreview = cameraPreview
         
-        self.view.addSubview(imagePickerButton)
+        view.addSubview(imagePickerButton)
         
         NSLayoutConstraint.activate([
             imagePickerButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             view.trailingAnchor.constraint(equalTo: imagePickerButton.trailingAnchor, constant: 15)
         ])
         
-        self.view.addSubview(fpsLabel)
+        view.addSubview(fpsLabel)
         
         NSLayoutConstraint.activate([
             fpsLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             fpsLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15)
         ])
         
-        self.view.addSubview(cameraUnavailableLabel)
+        view.addSubview(cameraUnavailableLabel)
         
-        cameraUnavailableLabel.centerXAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.centerXAnchor).isActive = true
-        cameraUnavailableLabel.centerYAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.centerYAnchor).isActive = true
+        cameraUnavailableLabel.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor).isActive = true
+        cameraUnavailableLabel.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor).isActive = true
     }
     
     private func requestCameraPermission(completion: @escaping (Bool) -> Void) {
@@ -169,7 +173,7 @@ class CameraViewController: UIViewController {
         configuration.preferredAssetRepresentationMode = .current
         // Set the selection behavior to respect the user’s selection order.
         configuration.selection = .ordered
-        // Set the selection limit to enable multiselection.
+        // Set the selection limit.
         configuration.selectionLimit = 1
         // Set the preselected asset identifiers with the identifiers that the app tracks.
         configuration.preselectedAssetIdentifiers = selectedAssetIdentifiers
@@ -285,11 +289,13 @@ extension CameraViewController: FpsDelegate {
 
 private extension CameraViewController {
     func displayNext() {
-        guard let assetIdentifier = selectedAssetIdentifierIterator?.next() else { return }
+        guard let assetIdentifier = selectedAssetIdentifierIterator?.next() else {
+            return
+        }
+        
         currentAssetIdentifier = assetIdentifier
         
-        let itemProvider = selection[assetIdentifier]!.itemProvider
-        if itemProvider.canLoadObject(ofClass: UIImage.self) {
+        if let itemProvider = selection[assetIdentifier]?.itemProvider, itemProvider.canLoadObject(ofClass: UIImage.self) {
             itemProvider.loadObject(ofClass: UIImage.self) { [weak self] image, error in
                 DispatchQueue.main.async {
                     self?.handleCompletion(assetIdentifier: assetIdentifier, object: image, error: error)
@@ -299,7 +305,10 @@ private extension CameraViewController {
     }
     
     func handleCompletion(assetIdentifier: String, object: Any?, error: Error? = nil) {
-        guard currentAssetIdentifier == assetIdentifier else { return }
+        guard currentAssetIdentifier == assetIdentifier else {
+            return
+        }
+        
         if let cgImage = rotateIfNeeded(object as? UIImage)?.cgImage {
             cameraController.setImage(cgImage: cgImage)
         }
@@ -310,10 +319,13 @@ extension CameraViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         dismiss(animated: true)
         
-        let existingSelection = self.selection
+        let existingSelection = selection
         var newSelection = [String: PHPickerResult]()
         for result in results {
-            guard let identifier = result.assetIdentifier else { continue }
+            guard let identifier = result.assetIdentifier else {
+                continue
+            }
+            
             newSelection[identifier] = existingSelection[identifier] ?? result
         }
         
