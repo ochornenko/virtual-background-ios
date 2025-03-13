@@ -28,7 +28,7 @@ class CameraPreview: MTKView {
     
     private var _pixelBuffer: CVPixelBuffer?
     
-    private let syncQueue = DispatchQueue(label: "Preview.SyncQueue", attributes: .concurrent)
+    private let syncQueue = DispatchQueue(label: "preview.sync.queue", attributes: .concurrent)
     
     private var textureCache: CVMetalTextureCache?
     private var textureWidth = 0

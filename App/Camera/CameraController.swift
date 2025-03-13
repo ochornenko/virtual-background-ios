@@ -22,9 +22,9 @@ class CameraController: NSObject {
     
     private let captureSession = AVCaptureSession()
     
-    private let sessionQueue = DispatchQueue(label: "Session.Queue")
+    private let sessionQueue = DispatchQueue(label: "session.queue")
     
-    private let dataOutputQueue = DispatchQueue(label: "Data.Output.Queue")
+    private let dataOutputQueue = DispatchQueue(label: "data.output.queue")
     
     private let cameraVideoDataOutput = AVCaptureVideoDataOutput()
     
