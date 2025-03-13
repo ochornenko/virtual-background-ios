@@ -10,7 +10,7 @@ import MetalKit
 
 protocol CameraProcessor {
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
-    func setImage(cgImage: CGImage)
+    func applyBackgroundImage(_ image: CGImage)
 }
 
 class CameraVirtualBackgroundProcessor: CameraProcessor {
@@ -155,15 +155,16 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         return pixelBuffer
     }
     
-    func setImage(cgImage: CGImage) {
-        if let image = resizeCGImageToFill(cgImage, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
-            self.backgroundTexture = loadTexture(image: image)
+    func applyBackgroundImage(_ image: CGImage) {
+        if let resizedImage = resizeCGImageToFill(image, targetWidth: Int(videoSize.width), targetHeight: Int(videoSize.height)) {
+            self.backgroundTexture = loadTexture(image: resizedImage)
         }
     }
     
     private func render(pixelBuffer: CVPixelBuffer?) -> MTLTexture? {
         // Create a command buffer and compute command encoder.
-        guard let commandBuffer = commandQueue.makeCommandBuffer(), let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder() else {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder() else {
             return nil
         }
         

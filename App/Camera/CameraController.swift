@@ -98,8 +98,8 @@ class CameraController: NSObject {
         }
     }
     
-    public func setImage(cgImage: CGImage) {
-        self.cameraProcessor?.setImage(cgImage: cgImage)
+    public func applyBackgroundImage(_ image: CGImage) {
+        cameraProcessor?.applyBackgroundImage(image)
     }
 }
 
@@ -196,21 +196,21 @@ extension CameraController {
 extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let currentTime = CACurrentMediaTime()
-        let elapsedTime = currentTime - self.lastFpsTimestamp
+        let elapsedTime = currentTime - lastFpsTimestamp
         
-        self.frameCount += 1
+        frameCount += 1
         
         if elapsedTime >= 1.0 { // Update FPS every second
-            let fps = Double(self.frameCount) / elapsedTime
+            let fps = Double(frameCount) / elapsedTime
             
-            self.fpsDelegate?.didUpdateFps(fps)
+            fpsDelegate?.didUpdateFps(fps)
             
-            self.frameCount = 0
-            self.lastFpsTimestamp = currentTime
+            frameCount = 0
+            lastFpsTimestamp = currentTime
         }
         
         if let videoDataOutput = output as? AVCaptureVideoDataOutput {
-            self.processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
+            processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
         }
     }
     

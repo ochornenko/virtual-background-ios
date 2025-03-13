@@ -309,8 +309,8 @@ private extension CameraViewController {
             return
         }
         
-        if let cgImage = rotateIfNeeded(object as? UIImage)?.cgImage {
-            cameraController.setImage(cgImage: cgImage)
+        if let image = rotateIfNeeded(object as? UIImage)?.cgImage {
+            cameraController.applyBackgroundImage(image)
         }
     }
 }
