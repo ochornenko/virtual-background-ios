@@ -38,7 +38,7 @@ class CameraController: NSObject {
     
     private var isSessionRunning = false
     
-    private var renderingEnabled = true
+    private var isRenderingEnabled = true
     
     private var lastFpsTimestamp: TimeInterval = CACurrentMediaTime()
     
@@ -88,13 +88,13 @@ class CameraController: NSObject {
     
     public func enableRendering() {
         dataOutputQueue.async {
-            self.renderingEnabled = true
+            self.isRenderingEnabled = true
         }
     }
     
     public func disableRendering() {
         dataOutputQueue.async {
-            self.renderingEnabled = false
+            self.isRenderingEnabled = false
         }
     }
     
@@ -215,7 +215,7 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
     }
     
     private func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, fromOutput videoDataOutput: AVCaptureVideoDataOutput) {
-        guard renderingEnabled else {
+        guard isRenderingEnabled else {
             return
         }
         
