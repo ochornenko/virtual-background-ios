@@ -33,8 +33,6 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     private var device: MTLDevice
     private lazy var model = getDeepLabV3Model()
     
-    private var backgroundImage: CIImage? = nil
-    
     private let bytesPerPixel = 4
     private var videoSize = CGSize(width: 720, height: 1280)
     
