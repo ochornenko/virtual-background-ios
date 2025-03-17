@@ -36,6 +36,10 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     private let bytesPerPixel = 4
     private var videoSize = CGSize(width: 720, height: 1280)
     
+    private lazy var textureLoader: MTKTextureLoader = {
+        return MTKTextureLoader(device: device)
+    }()
+    
     private lazy var samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.magFilter = .linear
@@ -64,7 +68,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         device = metalDevice
         commandQueue = queue
         
-        // Create the metal library containing the shaders
+        // Create the metal library containing the shaders.
         guard let library = metalDevice.makeDefaultLibrary() else {
             Log.error("Failed to make metal library")
             return nil
@@ -167,7 +171,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
         
         if let backgroundTexture = backgroundTexture {
-            // Set the background texture for the compute shader
+            // Set the background texture for the compute shader.
             computeCommandEncoder.setTexture(backgroundTexture, index: 0)
         }
         
@@ -203,11 +207,23 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         return outputTexture
     }
     
+    private func loadTexture(image: CGImage) -> MTLTexture? {
+        do {
+            // Load a texture from the specified image.
+            return try textureLoader.newTexture(cgImage: image, options: [
+                MTKTextureLoader.Option.SRGB : NSNumber(value: false)
+            ])
+        } catch {
+            Log.error("Error: could not load texture \(error)")
+            return nil
+        }
+    }
+    
     private func makeTextureFromCVPixelBuffer(pixelBuffer: CVPixelBuffer) -> MTLTexture? {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         
-        // Create a Metal texture from the image buffer
+        // Create a Metal texture from the image buffer.
         var cvTextureOut: CVMetalTexture?
         CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, textureCache!, pixelBuffer, nil, .bgra8Unorm, width, height, 0, &cvTextureOut)
         guard let cvTexture = cvTextureOut, let texture = CVMetalTextureGetTexture(cvTexture) else {

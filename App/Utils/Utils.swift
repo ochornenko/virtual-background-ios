@@ -9,7 +9,14 @@ import Accelerate
 import MetalKit
 
 /**
- Resizes a CVPixelBuffer to a new width and height.
+ Resizes a CVPixelBuffer to the specified width and height without cropping.
+ This function acts as a wrapper around `resizePixelBuffer`, resizing the entire pixel buffer while maintaining efficiency.
+ 
+ - Parameters:
+ - pixelBuffer: The source CVPixelBuffer.
+ - width: The target width for the resized pixel buffer.
+ - height: The target height for the resized pixel buffer.
+ - Returns: A new resized CVPixelBuffer, or `nil` if resizing fails.
  */
 public func resizePixelBuffer(_ pixelBuffer: CVPixelBuffer,
                               width: Int, height: Int) -> CVPixelBuffer? {
@@ -20,7 +27,20 @@ public func resizePixelBuffer(_ pixelBuffer: CVPixelBuffer,
 }
 
 /**
- First crops the pixel buffer, then resizes it.
+ Crops and resizes a CVPixelBuffer to the specified dimensions.
+ 
+ This function first extracts a cropped region from the source pixel buffer and then scales it to the target size.
+ It uses the Accelerate framework's vImage API for efficient resizing.
+ 
+ - Parameters:
+ - srcPixelBuffer: The source CVPixelBuffer.
+ - cropX: The x-coordinate of the top-left corner of the cropping region.
+ - cropY: The y-coordinate of the top-left corner of the cropping region.
+ - cropWidth: The width of the cropping region.
+ - cropHeight: The height of the cropping region.
+ - scaleWidth: The desired output width after resizing.
+ - scaleHeight: The desired output height after resizing.
+ - Returns: A new resized CVPixelBuffer, or `nil` if an error occurs.
  */
 public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer,
                               cropX: Int,
@@ -83,24 +103,16 @@ public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer,
     return dstPixelBuffer
 }
 
-private let textureLoader: MTKTextureLoader = {
-    return MTKTextureLoader(device: MTLCreateSystemDefaultDevice()!)
-}()
-
 /**
- Loads a texture from the specified image.
+ Resizes a CGImage to completely fill the target dimensions while maintaining the aspect ratio.
+ This function scales the image so that it completely covers the target size, potentially cropping excess areas.
+ 
+ - Parameters:
+ - inputCGImage: The original CGImage to be resized.
+ - targetWidth: The desired width of the output image.
+ - targetHeight: The desired height of the output image.
+ - Returns: A new CGImage resized to fill the target dimensions, or `nil` if resizing fails.
  */
-public func loadTexture(image: CGImage) -> MTLTexture? {
-    do {
-        return try textureLoader.newTexture(cgImage: image, options: [
-            MTKTextureLoader.Option.SRGB : NSNumber(value: false)
-        ])
-    } catch {
-        Log.error("Error: could not load texture \(error)")
-        return nil
-    }
-}
-
 public func resizeCGImageToFill(_ inputCGImage: CGImage, targetWidth: Int, targetHeight: Int) -> CGImage? {
     let widthScale = CGFloat(targetWidth) / CGFloat(inputCGImage.width)
     let heightScale = CGFloat(targetHeight) / CGFloat(inputCGImage.height)
@@ -138,6 +150,15 @@ public func resizeCGImageToFill(_ inputCGImage: CGImage, targetWidth: Int, targe
     return context.makeImage()
 }
 
+/**
+ Rotates the given UIImage if its orientation is not `.up`.
+ If the image is already upright, it returns the original image.
+ This function creates a new image context, draws the image into it,
+ and retrieves the correctly oriented image.
+ 
+ - Parameter image: The UIImage to be rotated if needed.
+ - Returns: A new UIImage with corrected orientation, or the original image if no rotation was needed.
+ */
 public func rotateIfNeeded(_ image: UIImage?) -> UIImage? {
     guard let image = image, image.imageOrientation != .up else {
         return image
