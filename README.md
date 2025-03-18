@@ -169,5 +169,9 @@ Here’s how it works:
 
 ## Demo
 
+https://github.com/user-attachments/assets/96686316-3284-41f2-9f14-97fa5197d0da
+
+## Like This Project? Fuel It with a Coffee! ☕
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/ochornenko)
+
