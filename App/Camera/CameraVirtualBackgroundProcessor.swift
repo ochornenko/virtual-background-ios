@@ -34,7 +34,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     private lazy var model = getDeepLabV3Model()
     
     private let bytesPerPixel = 4
-    private var videoSize = CGSize(width: 720, height: 1280)
+    private let videoSize = CGSize(width: 720, height: 1280)
     
     private lazy var textureLoader: MTKTextureLoader = {
         return MTKTextureLoader(device: device)
@@ -58,8 +58,6 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     init?() {
-        self.pixelData = [UInt8](repeating: 0, count: Int(videoSize.width * videoSize.height * 4))
-        
         // Get the default metal device and create command queue.
         guard let metalDevice = MTLCreateSystemDefaultDevice(), let queue = metalDevice.makeCommandQueue() else {
             return nil
@@ -107,6 +105,8 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
             Log.error("Failed to create metal output texture")
             return nil
         }
+        
+        pixelData = [UInt8](repeating: 0, count: Int(videoSize.width * videoSize.height * 4))
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
