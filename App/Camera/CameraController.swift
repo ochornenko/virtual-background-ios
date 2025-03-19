@@ -202,6 +202,15 @@ extension CameraController {
 
 extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        
+        calculateFps()
+        
+        if let videoDataOutput = output as? AVCaptureVideoDataOutput {
+            processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
+        }
+    }
+    
+    private func calculateFps() {
         let currentTime = CACurrentMediaTime()
         let elapsedTime = currentTime - lastFpsTimestamp
         
@@ -214,10 +223,6 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
             
             frameCount = 0
             lastFpsTimestamp = currentTime
-        }
-        
-        if let videoDataOutput = output as? AVCaptureVideoDataOutput {
-            processVideoSampleBuffer(sampleBuffer, fromOutput: videoDataOutput)
         }
     }
     
