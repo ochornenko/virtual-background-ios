@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Accelerate
 import AVFoundation
 
 protocol FpsDelegate: AnyObject {
@@ -27,6 +28,8 @@ class CameraController: NSObject {
     
     private let devicePosition: AVCaptureDevice.Position = .front
     
+    private let portraitVideoRotationAngle: CGFloat = 90
+    
     private let captureSession = AVCaptureSession()
     
     private let sessionQueue = DispatchQueue(label: "session.queue")
@@ -36,6 +39,10 @@ class CameraController: NSObject {
     private let cameraVideoDataOutput = AVCaptureVideoDataOutput()
     
     private var videoTrackSourceFormatDescription: CMFormatDescription?
+    
+    private var rotatedPixelBufferPool: CVPixelBufferPool?
+    
+    private var rotatedPixelBufferPoolSize: CGSize = .zero
     
     private var cameraDeviceInput: AVCaptureDeviceInput?
     
@@ -190,7 +197,9 @@ extension CameraController {
             return false
         }
         captureSession.addConnection(cameraVideoDataOutputConnection)
-        cameraVideoDataOutputConnection.videoRotationAngle = 90
+        if cameraVideoDataOutputConnection.isVideoRotationAngleSupported(portraitVideoRotationAngle) {
+            cameraVideoDataOutputConnection.videoRotationAngle = portraitVideoRotationAngle
+        }
         cameraVideoDataOutputConnection.automaticallyAdjustsVideoMirroring = false
         cameraVideoDataOutputConnection.isVideoMirrored = true
         
@@ -236,7 +245,8 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
         }
         
         if videoDataOutput == cameraVideoDataOutput {
-            guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            guard let cameraPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+                  let imageBuffer = portraitPixelBuffer(from: cameraPixelBuffer) else {
                 return
             }
             
@@ -246,5 +256,63 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
             
             cameraPreview?.pixelBuffer = pixelBuffer
         }
+    }
+    
+    /// Some iOS versions ignore `videoRotationAngle` and deliver landscape frames, while the camera processor expects portrait ones.
+    private func portraitPixelBuffer(from pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        guard width > height else {
+            return pixelBuffer
+        }
+        
+        if rotatedPixelBufferPool == nil || rotatedPixelBufferPoolSize != CGSize(width: height, height: width) {
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: height,
+                kCVPixelBufferHeightKey as String: width,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            rotatedPixelBufferPool = nil
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &rotatedPixelBufferPool)
+            rotatedPixelBufferPoolSize = CGSize(width: height, height: width)
+        }
+        
+        var rotatedPixelBuffer: CVPixelBuffer?
+        guard let pool = rotatedPixelBufferPool,
+              CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &rotatedPixelBuffer) == kCVReturnSuccess,
+              let rotatedPixelBuffer = rotatedPixelBuffer else {
+            Log.error("Could not create rotated pixel buffer")
+            return nil
+        }
+        
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        CVPixelBufferLockBaseAddress(rotatedPixelBuffer, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(rotatedPixelBuffer, [])
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+        }
+        
+        var source = vImage_Buffer(data: CVPixelBufferGetBaseAddress(pixelBuffer),
+                                   height: vImagePixelCount(height),
+                                   width: vImagePixelCount(width),
+                                   rowBytes: CVPixelBufferGetBytesPerRow(pixelBuffer))
+        var destination = vImage_Buffer(data: CVPixelBufferGetBaseAddress(rotatedPixelBuffer),
+                                        height: vImagePixelCount(width),
+                                        width: vImagePixelCount(height),
+                                        rowBytes: CVPixelBufferGetBytesPerRow(rotatedPixelBuffer))
+        var backgroundColor: [UInt8] = [0, 0, 0, 0]
+        let error = vImageRotate90_ARGB8888(&source,
+                                            &destination,
+                                            UInt8(kRotate90DegreesClockwise),
+                                            &backgroundColor,
+                                            vImage_Flags(kvImageNoFlags))
+        guard error == kvImageNoError else {
+            Log.error("Could not rotate camera frame: \(error)")
+            return nil
+        }
+        
+        return rotatedPixelBuffer
     }
 }
