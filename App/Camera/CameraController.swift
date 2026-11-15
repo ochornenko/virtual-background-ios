@@ -38,8 +38,6 @@ class CameraController: NSObject {
     
     private let cameraVideoDataOutput = AVCaptureVideoDataOutput()
     
-    private var videoTrackSourceFormatDescription: CMFormatDescription?
-    
     private var rotatedPixelBufferPool: CVPixelBufferPool?
     
     private var rotatedPixelBufferPoolSize: CGSize = .zero
@@ -222,7 +220,7 @@ extension CameraController {
 
 // MARK: Camera Capture Delegates
 
-extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
+extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
         calculateFps()
@@ -251,10 +249,6 @@ extension CameraController: AVCaptureAudioDataOutputSampleBufferDelegate, AVCapt
     private func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, fromOutput videoDataOutput: AVCaptureVideoDataOutput) {
         guard isRenderingEnabled else {
             return
-        }
-        
-        if videoTrackSourceFormatDescription == nil {
-            videoTrackSourceFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
         }
         
         if videoDataOutput == cameraVideoDataOutput {

@@ -24,7 +24,6 @@ classDiagram
         -sessionQueue: DispatchQueue
         -dataOutputQueue: DispatchQueue
         -cameraVideoDataOutput: AVCaptureVideoDataOutput
-        -videoTrackSourceFormatDescription: CMFormatDescription?
         -rotatedPixelBufferPool: CVPixelBufferPool?
         -cameraDeviceInput: AVCaptureDeviceInput?
         -cameraProcessor: CameraProcessor?
@@ -91,10 +90,7 @@ classDiagram
 
     class CameraViewController {
         -cameraController: CameraController!
-        -selection: [String: PHPickerResult]
-        -selectedAssetIdentifiers: [String]
-        -selectedAssetIdentifierIterator: IndexingIterator<[String]>?
-        -currentAssetIdentifier: String?
+        -selectedAssetIdentifier: String?
         -cameraPreview: CameraPreview
         -imagePickerButton: UIButton
         -fpsLabel: UILabel
@@ -116,8 +112,7 @@ classDiagram
         +addObservers()
         +removeObservers()
         +didUpdateFps(fps: Double)
-        +displayNext()
-        +handleCompletion(assetIdentifier: String, object: Any?, error: Error?)
+        +picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult])
     }
 
     CameraController --> FpsDelegate
@@ -144,7 +139,7 @@ Each time a new video frame is captured, the `captureOutput` method is triggered
 
 ## Camera Preview Rendering
 
-The `CameraPreview` class is a custom `MetalKit` view that renders video frames captured by the camera. It manages the `Metal` device, command queue, render pipeline state, and texture cache. The class handles the creation of `Metal` textures from pixel buffers, sets up the necessary transformations for rendering, and encodes the rendering commands. The draw method is responsible for rendering the video frames on the screen, and the `setupTransform` method updates the transformation settings based on the texture dimensions, view bounds, mirroring, and rotation.
+The `CameraPreview` class is a custom `MetalKit` view that renders video frames captured by the camera. It manages the `Metal` device, command queue, render pipeline state, and texture cache. The class handles the creation of `Metal` textures from pixel buffers, sets up the necessary transformations for rendering, and encodes the rendering commands. The draw method is responsible for rendering the video frames on the screen, and the `setupTransform` method scales the frame to fill the view while preserving its aspect ratio, recalculating whenever the texture dimensions or view bounds change.
 
 The `PassThrough.metal` file contains the vertex and fragment shaders used by the `CameraPreview` class to render video frames. The vertex shader processes the vertex positions and texture coordinates, while the fragment shader samples the texture to determine the color of each pixel. The `CameraPreview` class sets up the render pipeline state with these shaders, prepares the vertex and texture coordinate buffers, and issues draw commands to render the video frames using `Metal`. This setup allows for efficient and high-performance rendering of video frames captured by the camera.
 

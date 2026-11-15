@@ -16,12 +16,6 @@ import MetalKit
 
 class CameraPreview: MTKView {
     
-    enum Rotation: Int {
-        case rotate0Degrees, rotate90Degrees, rotate180Degrees, rotate270Degrees
-    }
-    
-    var mirroring = false
-    var rotation: Rotation = .rotate0Degrees
     var pixelBuffer: CVPixelBuffer? {
         get {
             return syncQueue.sync { _pixelBuffer }
@@ -40,8 +34,6 @@ class CameraPreview: MTKView {
     private var textureCache: CVMetalTextureCache?
     private var textureWidth = 0
     private var textureHeight = 0
-    private var textureMirroring = false
-    private var textureRotation: Rotation = .rotate0Degrees
     private var internalBounds: CGRect!
     
     private lazy var commandQueue: MTLCommandQueue? = {
@@ -71,9 +63,8 @@ class CameraPreview: MTKView {
     private var textCoordBuffer: MTLBuffer?
     
     override init(frame: CGRect, device: MTLDevice? = nil) {
-        super.init(frame: frame, device: device)
+        super.init(frame: frame, device: device ?? MTLCreateSystemDefaultDevice())
         
-        self.device = MTLCreateSystemDefaultDevice()
         colorPixelFormat = .bgra8Unorm
         createTextureCache()
     }
@@ -121,9 +112,8 @@ class CameraPreview: MTKView {
             return
         }
         
-        if texture.width != textureWidth || texture.height != textureHeight ||
-            bounds != internalBounds || mirroring != textureMirroring || rotation != textureRotation {
-            setupTransform(width: texture.width, height: texture.height, mirroring: mirroring, rotation: rotation)
+        if texture.width != textureWidth || texture.height != textureHeight || bounds != internalBounds {
+            setupTransform(width: texture.width, height: texture.height)
         }
         
         guard let commandQueue = commandQueue,
@@ -147,24 +137,14 @@ class CameraPreview: MTKView {
         commandBuffer.commit()
     }
     
-    private func setupTransform(width: Int, height: Int, mirroring: Bool, rotation: Rotation) {
+    /// Scales the quad so the texture fills the view while keeping its aspect ratio, cropping whatever overflows.
+    private func setupTransform(width: Int, height: Int) {
         internalBounds = self.bounds
         textureWidth = width
         textureHeight = height
-        textureMirroring = mirroring
-        textureRotation = rotation
         
-        var scaleX: Float = 1.0
-        var scaleY: Float = 1.0
-        
-        switch rotation {
-        case .rotate0Degrees, .rotate180Degrees:
-            scaleX = Float(internalBounds.width / CGFloat(textureWidth))
-            scaleY = Float(internalBounds.height / CGFloat(textureHeight))
-        case .rotate90Degrees, .rotate270Degrees:
-            scaleX = Float(internalBounds.width / CGFloat(textureHeight))
-            scaleY = Float(internalBounds.height / CGFloat(textureWidth))
-        }
+        var scaleX = Float(internalBounds.width / CGFloat(textureWidth))
+        var scaleY = Float(internalBounds.height / CGFloat(textureHeight))
         
         if scaleX > scaleY {
             scaleY = scaleX / scaleY
@@ -174,8 +154,6 @@ class CameraPreview: MTKView {
             scaleY = 1.0
         }
         
-        if mirroring { scaleX *= -1.0 }
-        
         let vertexData: [Float] = [
             -scaleX, -scaleY, 0.0, 1.0,
              scaleX, -scaleY, 0.0, 1.0,
@@ -184,14 +162,7 @@ class CameraPreview: MTKView {
         ]
         vertexCoordBuffer = device?.makeBuffer(bytes: vertexData, length: vertexData.count * MemoryLayout<Float>.size)
         
-        let textureCoordinates: [Float] = {
-            switch rotation {
-            case .rotate0Degrees:   return [0, 1, 1, 1, 0, 0, 1, 0]
-            case .rotate180Degrees: return [1, 0, 0, 0, 1, 1, 0, 1]
-            case .rotate90Degrees:  return [1, 1, 1, 0, 0, 1, 0, 0]
-            case .rotate270Degrees: return [0, 0, 0, 1, 1, 0, 1, 1]
-            }
-        }()
+        let textureCoordinates: [Float] = [0, 1, 1, 1, 0, 0, 1, 0]
         textCoordBuffer = device?.makeBuffer(bytes: textureCoordinates, length: textureCoordinates.count * MemoryLayout<Float>.size)
     }
     

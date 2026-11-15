@@ -20,10 +20,7 @@ class CameraViewController: UIViewController {
     
     private var cameraController: CameraController!
     
-    private var selection = [String: PHPickerResult]()
-    private var selectedAssetIdentifiers = [String]()
-    private var selectedAssetIdentifierIterator: IndexingIterator<[String]>?
-    private var currentAssetIdentifier: String?
+    private var selectedAssetIdentifier: String?
     
     private lazy var cameraPreview: CameraPreview = {
         let preview = CameraPreview(frame: view.frame)
@@ -176,16 +173,12 @@ class CameraViewController: UIViewController {
     private func presentPicker(filter: PHPickerFilter?) {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         
-        // Set the filter type according to the user’s selection.
         configuration.filter = filter
         // Set the mode to avoid transcoding, if possible, if your app supports arbitrary image/video encodings.
         configuration.preferredAssetRepresentationMode = .current
-        // Set the selection behavior to respect the user’s selection order.
-        configuration.selection = .ordered
-        // Set the selection limit.
         configuration.selectionLimit = 1
-        // Set the preselected asset identifiers with the identifiers that the app tracks.
-        configuration.preselectedAssetIdentifiers = selectedAssetIdentifiers
+        // Show the current background as selected when the picker opens.
+        configuration.preselectedAssetIdentifiers = selectedAssetIdentifier.map { [$0] } ?? []
         
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = self
@@ -314,55 +307,30 @@ extension CameraViewController: FpsDelegate {
     }
 }
 
-private extension CameraViewController {
-    func displayNext() {
-        guard let assetIdentifier = selectedAssetIdentifierIterator?.next() else {
-            return
-        }
-        
-        currentAssetIdentifier = assetIdentifier
-        
-        if let itemProvider = selection[assetIdentifier]?.itemProvider, itemProvider.canLoadObject(ofClass: UIImage.self) {
-            itemProvider.loadObject(ofClass: UIImage.self) { [weak self] image, error in
-                DispatchQueue.main.async {
-                    self?.handleCompletion(assetIdentifier: assetIdentifier, object: image, error: error)
-                }
-            }
-        }
-    }
-    
-    func handleCompletion(assetIdentifier: String, object: Any?, error: Error? = nil) {
-        guard currentAssetIdentifier == assetIdentifier else {
-            return
-        }
-        
-        if let image = rotateIfNeeded(object as? UIImage)?.cgImage {
-            cameraController.applyBackgroundImage(image)
-        }
-    }
-}
-
 extension CameraViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         dismiss(animated: true)
         
-        let existingSelection = selection
-        var newSelection = [String: PHPickerResult]()
-        for result in results {
-            guard let identifier = result.assetIdentifier else {
-                continue
-            }
-            
-            newSelection[identifier] = existingSelection[identifier] ?? result
+        guard let result = results.first, result.itemProvider.canLoadObject(ofClass: UIImage.self) else {
+            return
         }
         
-        // Track the selection in case the user deselects it later.
-        selection = newSelection
-        selectedAssetIdentifiers = results.compactMap { $0.assetIdentifier }
-        selectedAssetIdentifierIterator = selectedAssetIdentifiers.makeIterator()
+        let assetIdentifier = result.assetIdentifier
+        selectedAssetIdentifier = assetIdentifier
         
-        if !selection.isEmpty {
-            displayNext()
+        result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
+            if let error = error {
+                Log.error("Could not load the selected image: \(error)")
+            }
+            
+            DispatchQueue.main.async {
+                // A slower load from an earlier pick must not replace a newer background
+                guard let self = self, self.selectedAssetIdentifier == assetIdentifier,
+                      let image = rotateIfNeeded(object as? UIImage)?.cgImage else {
+                    return
+                }
+                self.cameraController.applyBackgroundImage(image)
+            }
         }
     }
 }

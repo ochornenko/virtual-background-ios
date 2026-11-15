@@ -103,8 +103,8 @@ public func resizeCGImageToFill(_ inputCGImage: CGImage, targetWidth: Int, targe
 /**
  Rotates the given UIImage if its orientation is not `.up`.
  If the image is already upright, it returns the original image.
- This function creates a new image context, draws the image into it,
- and retrieves the correctly oriented image.
+ This function draws the image with an image renderer, which applies its orientation,
+ and returns the correctly oriented image.
  
  - Parameter image: The UIImage to be rotated if needed.
  - Returns: A new UIImage with corrected orientation, or the original image if no rotation was needed.
@@ -114,10 +114,11 @@ public func rotateIfNeeded(_ image: UIImage?) -> UIImage? {
         return image
     }
     
-    UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
-    image.draw(in: CGRect(origin: .zero, size: image.size))
-    let rotatedImage = UIGraphicsGetImageFromCurrentImageContext()
-    UIGraphicsEndImageContext()
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = image.scale
+    format.opaque = false
     
-    return rotatedImage ?? image
+    return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+        image.draw(in: CGRect(origin: .zero, size: image.size))
+    }
 }
