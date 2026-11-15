@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import CoreML
 import MetalKit
+import Vision
 
 protocol CameraProcessor {
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
@@ -21,51 +21,29 @@ protocol CameraProcessor {
 }
 
 class CameraVirtualBackgroundProcessor: CameraProcessor {
-    struct MixParams {
-        var width: Int32 = 0
-        var height: Int32 = 0
-    }
-    
     private let backgroundTextureLock = NSLock()
     private var _backgroundTexture: MTLTexture?
     private var backgroundTexture: MTLTexture? {
         get { backgroundTextureLock.withLock { _backgroundTexture } }
         set { backgroundTextureLock.withLock { _backgroundTexture = newValue } }
     }
-    private let segmentationWidth = 513
-    private let segmentationHeight = 513
-    private let segmentationMaskBuffer: MTLBuffer
-    private let segmentationPixelBufferPool: CVPixelBufferPool
     private let outputPixelBufferPool: CVPixelBufferPool
     
     private let textureCache: CVMetalTextureCache
     private let commandQueue: MTLCommandQueue
     private let computePipelineState: MTLComputePipelineState
     private let device: MTLDevice
-    private let model: DeepLabV3?
+    
+    private let segmentationRequest = makeSegmentationRequest()
+    
+    // Keeps state between frames, which gives Vision a more temporally stable mask than one-off requests
+    private let sequenceRequestHandler = VNSequenceRequestHandler()
     
     private let videoSize = CGSize(width: 720, height: 1280)
     
     private lazy var textureLoader: MTKTextureLoader = {
         return MTKTextureLoader(device: device)
     }()
-    
-    private lazy var samplerState: MTLSamplerState? = {
-        let samplerDescriptor = MTLSamplerDescriptor()
-        samplerDescriptor.magFilter = .linear
-        samplerDescriptor.minFilter = .linear
-        return self.device.makeSamplerState(descriptor: samplerDescriptor)
-    }()
-    
-    private static func loadDeepLabV3Model() -> DeepLabV3? {
-        do {
-            let config = MLModelConfiguration()
-            return try DeepLabV3(configuration: config)
-        } catch {
-            Log.error("Error loading model: \(error)")
-            return nil
-        }
-    }
     
     init?() {
         // Get the default metal device and create command queue.
@@ -75,7 +53,6 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         
         device = metalDevice
         commandQueue = queue
-        model = Self.loadDeepLabV3Model()
         
         // Create the metal library containing the shaders.
         guard let library = metalDevice.makeDefaultLibrary() else {
@@ -105,19 +82,12 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
         textureCache = cache
         
-        guard let maskBuffer = metalDevice.makeBuffer(length: segmentationWidth * segmentationHeight * MemoryLayout<Int32>.stride,
-                                                      options: .storageModeShared) else {
-            Log.error("Failed to create segmentation mask buffer")
+        guard let outputPool = makePixelBufferPool(width: Int(videoSize.width), height: Int(videoSize.height)) else {
             return nil
         }
-        segmentationMaskBuffer = maskBuffer
-        
-        guard let segmentationPool = makePixelBufferPool(width: segmentationWidth, height: segmentationHeight),
-              let outputPool = makePixelBufferPool(width: Int(videoSize.width), height: Int(videoSize.height)) else {
-            return nil
-        }
-        segmentationPixelBufferPool = segmentationPool
         outputPixelBufferPool = outputPool
+        
+        warmUpSegmentation()
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
@@ -125,17 +95,17 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
             return framePixelBuffer
         }
         
-        guard let model = model,
-              let segmentationInput = makePixelBuffer(from: segmentationPixelBufferPool),
-              resizePixelBuffer(framePixelBuffer, into: segmentationInput),
-              let output = try? model.prediction(image: segmentationInput) else {
+        do {
+            try sequenceRequestHandler.perform([segmentationRequest], on: framePixelBuffer, orientation: .up)
+        } catch {
+            Log.error("Person segmentation failed: \(error)")
             return nil
         }
         
-        memcpy(segmentationMaskBuffer.contents(), output.semanticPredictions.dataPointer, segmentationMaskBuffer.length)
-        
-        guard let outputPixelBuffer = makePixelBuffer(from: outputPixelBufferPool),
-              render(pixelBuffer: framePixelBuffer, backgroundTexture: backgroundTexture, into: outputPixelBuffer) else {
+        guard let maskPixelBuffer = segmentationRequest.results?.first?.pixelBuffer,
+              let outputPixelBuffer = makePixelBuffer(from: outputPixelBufferPool),
+              render(pixelBuffer: framePixelBuffer, maskPixelBuffer: maskPixelBuffer,
+                     backgroundTexture: backgroundTexture, into: outputPixelBuffer) else {
             return nil
         }
         
@@ -148,10 +118,38 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
     }
     
-    private func render(pixelBuffer: CVPixelBuffer, backgroundTexture: MTLTexture, into outputPixelBuffer: CVPixelBuffer) -> Bool {
-        guard let inputCVTexture = makeMetalTexture(from: pixelBuffer, usage: .shaderRead),
+    private static func makeSegmentationRequest() -> VNGeneratePersonSegmentationRequest {
+        let request = VNGeneratePersonSegmentationRequest()
+        // `.accurate` is meant for still images and is too slow for live video
+        request.qualityLevel = .balanced
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        return request
+    }
+    
+    /// Runs segmentation once on a blank frame in the background so Vision loads its model before the first real frame.
+    /// Uses its own request because `segmentationRequest` belongs to the camera's data output queue.
+    private func warmUpSegmentation() {
+        guard let pixelBuffer = makePixelBuffer(from: outputPixelBufferPool) else {
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up).perform([Self.makeSegmentationRequest()])
+            } catch {
+                Log.error("Person segmentation warm-up failed: \(error)")
+            }
+        }
+    }
+    
+    private func render(pixelBuffer: CVPixelBuffer,
+                        maskPixelBuffer: CVPixelBuffer,
+                        backgroundTexture: MTLTexture,
+                        into outputPixelBuffer: CVPixelBuffer) -> Bool {
+        guard let inputCVTexture = makeMetalTexture(from: pixelBuffer, pixelFormat: .bgra8Unorm, usage: .shaderRead),
               let inputTexture = CVMetalTextureGetTexture(inputCVTexture),
-              let outputCVTexture = makeMetalTexture(from: outputPixelBuffer, usage: .shaderWrite),
+              let maskCVTexture = makeMetalTexture(from: maskPixelBuffer, pixelFormat: .r8Unorm, usage: .shaderRead),
+              let maskTexture = CVMetalTextureGetTexture(maskCVTexture),
+              let outputCVTexture = makeMetalTexture(from: outputPixelBuffer, pixelFormat: .bgra8Unorm, usage: .shaderWrite),
               let outputTexture = CVMetalTextureGetTexture(outputCVTexture) else {
             return false
         }
@@ -162,21 +160,10 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
             return false
         }
         
-        // Set the background texture for the compute shader.
         computeCommandEncoder.setTexture(backgroundTexture, index: 0)
         computeCommandEncoder.setTexture(inputTexture, index: 1)
-        
-        var params = MixParams()
-        params.width = Int32(segmentationWidth)
-        params.height = Int32(segmentationHeight)
-        computeCommandEncoder.setBuffer(segmentationMaskBuffer, offset: 0, index: 0)
-        computeCommandEncoder.setBytes(&params, length: MemoryLayout<MixParams>.size, index: 1)
-        
         computeCommandEncoder.setTexture(outputTexture, index: 2)
-        
-        computeCommandEncoder.setSamplerState(samplerState, index: 0)
-        computeCommandEncoder.setSamplerState(samplerState, index: 1)
-        computeCommandEncoder.setSamplerState(samplerState, index: 2)
+        computeCommandEncoder.setTexture(maskTexture, index: 3)
         
         // Set the compute pipeline state for the command encoder.
         computeCommandEncoder.dispatch(pipeline: computePipelineState, width: Int(videoSize.width), height: Int(videoSize.height))
@@ -190,6 +177,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         
         // The CVMetalTextures must stay alive until the GPU has finished with their MTLTextures
         withExtendedLifetime(inputCVTexture) {}
+        withExtendedLifetime(maskCVTexture) {}
         withExtendedLifetime(outputCVTexture) {}
         
         guard commandBuffer.status == .completed else {
@@ -212,13 +200,13 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     /// Wraps the pixel buffer's memory in a Metal texture without copying it.
-    private func makeMetalTexture(from pixelBuffer: CVPixelBuffer, usage: MTLTextureUsage) -> CVMetalTexture? {
+    private func makeMetalTexture(from pixelBuffer: CVPixelBuffer, pixelFormat: MTLPixelFormat, usage: MTLTextureUsage) -> CVMetalTexture? {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let attributes = [kCVMetalTextureUsage as String: usage.rawValue] as CFDictionary
         
         var cvTextureOut: CVMetalTexture?
-        CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, textureCache, pixelBuffer, attributes, .bgra8Unorm, width, height, 0, &cvTextureOut)
+        CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, textureCache, pixelBuffer, attributes, pixelFormat, width, height, 0, &cvTextureOut)
         guard let cvTexture = cvTextureOut else {
             Log.error("Video mixer failed to create texture")
             

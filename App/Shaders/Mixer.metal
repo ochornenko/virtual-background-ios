@@ -15,49 +15,60 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct MixParams {
-    int segmentationWidth;
-    int segmentationHeight;
-};
+// Mask values within this distance of 0 or 1 are treated as solid background or person and are not refined
+constant float EDGE_THRESHOLD = 0.02;
 
-// DeepLabV3 (PASCAL VOC) class label for "person"
-constant int PERSON_CLASS = 15;
+// Size of the neighbourhood, in output pixels, used to refine the edge (7x7 samples, 12 pixels across)
+constant int REFINE_RADIUS = 6;
+constant int REFINE_STEP = 2;
+
+// How quickly a neighbour's influence falls off with distance, in output pixels
+constant float SPATIAL_SIGMA = 4.0;
+
+// How quickly a neighbour's influence falls off with color difference, in normalized RGB
+constant float COLOR_SIGMA = 0.1;
+
+// The refined coverage is remapped through this range to tighten the edge
+constant float EDGE_LOW = 0.25;
+constant float EDGE_HIGH = 0.75;
 
 /*
- Returns 1 if the mask cell at the specified coordinate contains the class "person", 0 otherwise.
- Coordinates outside the mask are clamped to the nearest edge cell.
+ Refines the person coverage at an edge pixel using the camera image as a guide (joint bilateral filtering).
+ Neighbours with a color similar to the center pixel contribute more, so the edge snaps to
+ where the color actually changes in the camera image instead of following the coarse mask.
  */
-static inline float person_at(int x, int y, int width, int height, device const int* mask) {
-    x = clamp(x, 0, width - 1);
-    y = clamp(y, 0, height - 1);
-    return mask[y * width + x] == PERSON_CLASS ? 1.0 : 0.0;
-}
-
-/*
- Returns how much of the specified position is covered by a person, from 0 to 1.
- Blends the four nearest mask cells so the edge of the person is soft instead of blocky.
- The position should be normalized between 0 and 1.
- */
-static inline float person_coverage(float2 pos, int width, int height, device const int* mask) {
-    // Mask cell centers sit at half-cell offsets
-    const float2 cell = pos * float2(width, height) - 0.5;
-    const float2 cellFloor = floor(cell);
-    const float2 weight = cell - cellFloor;
-    const int x = int(cellFloor.x);
-    const int y = int(cellFloor.y);
+static inline float refine_coverage(int2 center,
+                                    float3 centerColor,
+                                    float2 size,
+                                    texture2d<float, access::read> inputTexture,
+                                    texture2d<float, access::sample> maskTexture,
+                                    sampler s) {
+    const int2 maxCoord = int2(size) - 1;
+    float weightedCoverage = 0.0;
+    float totalWeight = 0.0;
     
-    const float top = mix(person_at(x, y, width, height, mask),
-                          person_at(x + 1, y, width, height, mask), weight.x);
-    const float bottom = mix(person_at(x, y + 1, width, height, mask),
-                             person_at(x + 1, y + 1, width, height, mask), weight.x);
-    return mix(top, bottom, weight.y);
+    for (int dy = -REFINE_RADIUS; dy <= REFINE_RADIUS; dy += REFINE_STEP) {
+        for (int dx = -REFINE_RADIUS; dx <= REFINE_RADIUS; dx += REFINE_STEP) {
+            const int2 coord = clamp(center + int2(dx, dy), int2(0), maxCoord);
+            const float3 colorDifference = inputTexture.read(uint2(coord)).rgb - centerColor;
+            
+            const float spatial = float(dx * dx + dy * dy) / (2.0 * SPATIAL_SIGMA * SPATIAL_SIGMA);
+            const float range = dot(colorDifference, colorDifference) / (2.0 * COLOR_SIGMA * COLOR_SIGMA);
+            const float weight = exp(-(spatial + range));
+            
+            weightedCoverage += weight * maskTexture.sample(s, (float2(coord) + 0.5) / size).r;
+            totalWeight += weight;
+        }
+    }
+    
+    // The center sample always has weight 1, so totalWeight is never 0
+    return smoothstep(EDGE_LOW, EDGE_HIGH, weightedCoverage / totalWeight);
 }
 
 kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(0) ]],
                   texture2d<float, access::read> inputTexture [[ texture(1) ]],
                   texture2d<float, access::write> outputTexture [[ texture(2) ]],
-                  device const int* segmentationMask [[buffer(0)]],
-                  constant MixParams& params [[buffer(1)]],
+                  texture2d<float, access::sample> maskTexture [[ texture(3) ]],
                   uint2 gid [[thread_position_in_grid]]) {
     
     // Ensure the thread is within the bounds of the output texture
@@ -67,13 +78,18 @@ kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(
     constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
     
     // Normalized position of the output pixel's center
-    const float2 position = (float2(gid) + 0.5) / float2(outputTexture.get_width(), outputTexture.get_height());
-    
-    // Get how much of the current pixel is covered by a person
-    const float coverage = person_coverage(position, params.segmentationWidth, params.segmentationHeight, segmentationMask);
+    const float2 size = float2(outputTexture.get_width(), outputTexture.get_height());
+    const float2 position = (float2(gid) + 0.5) / size;
     
     // Read the input pixel
     const float4 inPixel = inputTexture.read(gid);
+    
+    // Get how much of the current pixel is covered by a person, refining it only along the edge
+    float coverage = maskTexture.sample(s, position).r;
+    if (coverage > EDGE_THRESHOLD && coverage < 1.0 - EDGE_THRESHOLD) {
+        coverage = refine_coverage(int2(gid), inPixel.rgb, size, inputTexture, maskTexture, s);
+    }
+    
     float4 outPixel = inPixel;
     
     if (coverage < 1.0) {

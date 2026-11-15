@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import Accelerate
 import MetalKit
 
 /**
@@ -52,50 +51,6 @@ public func makePixelBuffer(from pool: CVPixelBufferPool) -> CVPixelBuffer? {
         return nil
     }
     return pixelBuffer
-}
-
-/**
- Scales the entire source pixel buffer into the destination pixel buffer without cropping.
- Both pixel buffers must use a 4-channel, 8-bit pixel format such as BGRA.
- It uses the Accelerate framework's vImage API for efficient resizing.
- 
- - Parameters:
- - srcPixelBuffer: The source CVPixelBuffer.
- - dstPixelBuffer: The CVPixelBuffer to write the scaled image into.
- - Returns: `true` if scaling succeeded.
- */
-public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer, into dstPixelBuffer: CVPixelBuffer) -> Bool {
-    guard CVPixelBufferLockBaseAddress(srcPixelBuffer, .readOnly) == kCVReturnSuccess else {
-        return false
-    }
-    defer { CVPixelBufferUnlockBaseAddress(srcPixelBuffer, .readOnly) }
-    
-    guard CVPixelBufferLockBaseAddress(dstPixelBuffer, []) == kCVReturnSuccess else {
-        return false
-    }
-    defer { CVPixelBufferUnlockBaseAddress(dstPixelBuffer, []) }
-    
-    guard let srcData = CVPixelBufferGetBaseAddress(srcPixelBuffer),
-          let dstData = CVPixelBufferGetBaseAddress(dstPixelBuffer) else {
-        Log.error("Error: could not get pixel buffer base address")
-        return false
-    }
-    
-    var srcBuffer = vImage_Buffer(data: srcData,
-                                  height: vImagePixelCount(CVPixelBufferGetHeight(srcPixelBuffer)),
-                                  width: vImagePixelCount(CVPixelBufferGetWidth(srcPixelBuffer)),
-                                  rowBytes: CVPixelBufferGetBytesPerRow(srcPixelBuffer))
-    var dstBuffer = vImage_Buffer(data: dstData,
-                                  height: vImagePixelCount(CVPixelBufferGetHeight(dstPixelBuffer)),
-                                  width: vImagePixelCount(CVPixelBufferGetWidth(dstPixelBuffer)),
-                                  rowBytes: CVPixelBufferGetBytesPerRow(dstPixelBuffer))
-    
-    let error = vImageScale_ARGB8888(&srcBuffer, &dstBuffer, nil, vImage_Flags(kvImageNoFlags))
-    guard error == kvImageNoError else {
-        Log.error("Error: \(error)")
-        return false
-    }
-    return true
 }
 
 /**
