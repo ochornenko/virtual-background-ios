@@ -20,27 +20,43 @@ struct MixParams {
     int segmentationHeight;
 };
 
+// DeepLabV3 (PASCAL VOC) class label for "person"
+constant int PERSON_CLASS = 15;
+
 /*
- Returns the predicted class label at the specified pixel coordinate.
- The position should be normalized between 0 and 1.
+ Returns 1 if the mask cell at the specified coordinate contains the class "person", 0 otherwise.
+ Coordinates outside the mask are clamped to the nearest edge cell.
  */
-static inline int get_class(float2 pos, int width, int height, device int* mask) {
-    const int x = clamp(int(pos.x * width), 0, width - 1);
-    const int y = clamp(int(pos.y * height), 0, height - 1);
-    return mask[y * width + x];
+static inline float person_at(int x, int y, int width, int height, device const int* mask) {
+    x = clamp(x, 0, width - 1);
+    y = clamp(y, 0, height - 1);
+    return mask[y * width + x] == PERSON_CLASS ? 1.0 : 0.0;
 }
 
 /*
- Returns true if the specified pixel coordinate contains the class "person".
+ Returns how much of the specified position is covered by a person, from 0 to 1.
+ Blends the four nearest mask cells so the edge of the person is soft instead of blocky.
+ The position should be normalized between 0 and 1.
  */
-static inline bool is_person_at(float2 position, int width, int height, device int* mask) {
-    return get_class(position, width, height, mask) == 15;
+static inline float person_coverage(float2 pos, int width, int height, device const int* mask) {
+    // Mask cell centers sit at half-cell offsets
+    const float2 cell = pos * float2(width, height) - 0.5;
+    const float2 cellFloor = floor(cell);
+    const float2 weight = cell - cellFloor;
+    const int x = int(cellFloor.x);
+    const int y = int(cellFloor.y);
+    
+    const float top = mix(person_at(x, y, width, height, mask),
+                          person_at(x + 1, y, width, height, mask), weight.x);
+    const float bottom = mix(person_at(x, y + 1, width, height, mask),
+                             person_at(x + 1, y + 1, width, height, mask), weight.x);
+    return mix(top, bottom, weight.y);
 }
 
 kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(0) ]],
                   texture2d<float, access::read> inputTexture [[ texture(1) ]],
                   texture2d<float, access::write> outputTexture [[ texture(2) ]],
-                  device int* segmentationMask [[buffer(0)]],
+                  device const int* segmentationMask [[buffer(0)]],
                   constant MixParams& params [[buffer(1)]],
                   uint2 gid [[thread_position_in_grid]]) {
     
@@ -48,22 +64,22 @@ kernel void mixer(texture2d<float, access::sample> backgroundTexture [[ texture(
     if (gid.x >= outputTexture.get_width() || gid.y >= outputTexture.get_height()) return;
     
     // Define a sampler for texture sampling
-    constexpr sampler s(coord::normalized, address::clamp_to_zero, filter::linear);
+    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
     
-    // Use output resolution for normalized position
-    const float2 position = float2(float(gid.x) / float(outputTexture.get_width()),
-                                   float(gid.y) / float(outputTexture.get_height()));
+    // Normalized position of the output pixel's center
+    const float2 position = (float2(gid) + 0.5) / float2(outputTexture.get_width(), outputTexture.get_height());
     
-    // Get the probability that the current pixel contains a person
-    const float is_person = is_person_at(position, params.segmentationWidth, params.segmentationHeight, segmentationMask);
+    // Get how much of the current pixel is covered by a person
+    const float coverage = person_coverage(position, params.segmentationWidth, params.segmentationHeight, segmentationMask);
     
     // Read the input pixel
     const float4 inPixel = inputTexture.read(gid);
     float4 outPixel = inPixel;
     
-    if (!is_person) {
-        // If the pixel does not contain a person, use the background texture
-        outPixel = backgroundTexture.sample(s, position);
+    if (coverage < 1.0) {
+        // Blend the background in where the pixel is not fully covered by a person
+        const float4 backgroundPixel = backgroundTexture.sample(s, position);
+        outPixel = mix(backgroundPixel, inPixel, coverage);
     }
     
     // Write the output pixel
