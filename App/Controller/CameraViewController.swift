@@ -81,7 +81,7 @@ class CameraViewController: UIViewController {
                 case .success:
                     self.addObservers()
                 case .failed:
-                    self.showCameraDisabledAlert()
+                    self.showCameraUnavailableLabel()
                 }
             }
         }
