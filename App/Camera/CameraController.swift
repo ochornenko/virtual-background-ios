@@ -48,7 +48,10 @@ class CameraController: NSObject {
     
     private var cameraProcessor: CameraProcessor?
     
+    // Accessed only on the session queue
     private var setupResult: SessionSetupResult = .success
+    
+    private var isConfigured = false
     
     private var isSessionRunning = false
     
@@ -71,23 +74,28 @@ class CameraController: NSObject {
         configureCaptureSession()
     }
     
-    public func startRunning() -> SessionSetupResult {
-        if setupResult == .success {
-            sessionQueue.async {
+    /// Starts the session once configuration has finished and reports the setup result on the main queue.
+    public func startRunning(completion: @escaping (SessionSetupResult) -> Void) {
+        sessionQueue.async {
+            if self.setupResult == .success {
                 self.captureSession.startRunning()
                 self.isSessionRunning = self.captureSession.isRunning
             }
+            
+            let result = self.setupResult
+            DispatchQueue.main.async {
+                completion(result)
+            }
         }
-        
-        return setupResult
     }
     
     public func stopRunning() {
-        if setupResult == .success {
-            sessionQueue.async {
-                self.captureSession.stopRunning()
-                self.isSessionRunning = self.captureSession.isRunning
+        sessionQueue.async {
+            guard self.setupResult == .success else {
+                return
             }
+            self.captureSession.stopRunning()
+            self.isSessionRunning = self.captureSession.isRunning
         }
     }
     
@@ -129,9 +137,11 @@ extension CameraController {
          inputs, outputs, or connections from multiple threads at the same time.
          */
         sessionQueue.async {
+            guard !self.isConfigured else {
+                return
+            }
+            self.isConfigured = true
             self.configureSession()
-            self.captureSession.automaticallyConfiguresApplicationAudioSession = false
-            self.captureSession.sessionPreset = .hd1280x720
         }
     }
     
@@ -141,6 +151,9 @@ extension CameraController {
         defer {
             captureSession.commitConfiguration()
         }
+        
+        captureSession.automaticallyConfiguresApplicationAudioSession = false
+        captureSession.sessionPreset = .hd1280x720
         
         guard configureCamera() else {
             setupResult = .failed

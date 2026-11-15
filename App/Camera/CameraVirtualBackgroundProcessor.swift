@@ -27,7 +27,12 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     private var pixelData: [UInt8]
-    private var backgroundTexture: MTLTexture?
+    private let backgroundTextureLock = NSLock()
+    private var _backgroundTexture: MTLTexture?
+    private var backgroundTexture: MTLTexture? {
+        get { backgroundTextureLock.withLock { _backgroundTexture } }
+        set { backgroundTextureLock.withLock { _backgroundTexture = newValue } }
+    }
     private var outputTexture: MTLTexture?
     private var segmentationMaskBuffer: MTLBuffer?
     private var segmentationWidth = 513
@@ -38,7 +43,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     private var commandQueue: MTLCommandQueue
     private var computePipelineState: MTLComputePipelineState
     private var device: MTLDevice
-    private lazy var model = getDeepLabV3Model()
+    private let model: DeepLabV3?
     
     private let bytesPerPixel = 4
     private let videoSize = CGSize(width: 720, height: 1280)
@@ -54,7 +59,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         return self.device.makeSamplerState(descriptor: samplerDescriptor)
     }()
     
-    private func getDeepLabV3Model() -> DeepLabV3? {
+    private static func loadDeepLabV3Model() -> DeepLabV3? {
         do {
             let config = MLModelConfiguration()
             return try DeepLabV3(configuration: config)
@@ -72,6 +77,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         
         device = metalDevice
         commandQueue = queue
+        model = Self.loadDeepLabV3Model()
         
         // Create the metal library containing the shaders.
         guard let library = metalDevice.makeDefaultLibrary() else {
@@ -117,7 +123,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-        guard backgroundTexture != nil else {
+        guard let backgroundTexture = backgroundTexture else {
             return framePixelBuffer
         }
         
@@ -132,7 +138,7 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
             memcpy(buffer.contents(), output.semanticPredictions.dataPointer, buffer.length)
         }
         
-        guard let targetTexture = render(pixelBuffer: framePixelBuffer) else {
+        guard let targetTexture = render(pixelBuffer: framePixelBuffer, backgroundTexture: backgroundTexture) else {
             return nil
         }
         
@@ -170,17 +176,15 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
     }
     
-    private func render(pixelBuffer: CVPixelBuffer?) -> MTLTexture? {
+    private func render(pixelBuffer: CVPixelBuffer?, backgroundTexture: MTLTexture) -> MTLTexture? {
         // Create a command buffer and compute command encoder.
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder() else {
             return nil
         }
         
-        if let backgroundTexture = backgroundTexture {
-            // Set the background texture for the compute shader.
-            computeCommandEncoder.setTexture(backgroundTexture, index: 0)
-        }
+        // Set the background texture for the compute shader.
+        computeCommandEncoder.setTexture(backgroundTexture, index: 0)
         
         if let pixelBuffer = pixelBuffer, let inputTexture = makeTextureFromCVPixelBuffer(pixelBuffer: pixelBuffer) {
             inputCameraTexture = inputTexture

@@ -70,17 +70,19 @@ class CameraViewController: UIViewController {
         super.viewWillAppear(animated)
         
         requestCameraPermission { granted in
-            if granted {
-                self.cameraController.configure()
-                
-                switch self.cameraController.startRunning() {
+            guard granted else {
+                self.showCameraDisabledAlert()
+                return
+            }
+            
+            self.cameraController.configure()
+            self.cameraController.startRunning { result in
+                switch result {
                 case .success:
                     self.addObservers()
                 case .failed:
                     self.showCameraDisabledAlert()
                 }
-            } else {
-                self.showCameraDisabledAlert()
             }
         }
     }
@@ -205,17 +207,35 @@ class CameraViewController: UIViewController {
         if let userInfoValue = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as AnyObject?,
            let reasonIntegerValue = userInfoValue.integerValue,
            let reason = AVCaptureSession.InterruptionReason(rawValue: reasonIntegerValue) {
-            if reason == .videoDeviceInUseByAnotherClient {
+            switch reason {
+            case .videoDeviceInUseByAnotherClient:
                 Log.error("Camera is in use by another client")
-            } else if reason == .videoDeviceNotAvailableWithMultipleForegroundApps {
+                showCameraUnavailableLabel()
+            case .videoDeviceNotAvailableWithMultipleForegroundApps:
                 Log.error("Camera unavailable")
+                showCameraUnavailableLabel()
+            default:
+                break
+            }
+        }
+    }
+    
+    private func showCameraUnavailableLabel() {
+        DispatchQueue.main.async {
+            self.cameraUnavailableLabel.alpha = 0
+            self.cameraUnavailableLabel.isHidden = false
+            UIView.animate(withDuration: 0.25) {
+                self.cameraUnavailableLabel.alpha = 1
             }
         }
     }
     
     @objc
     private func sessionInterruptionEnded(notification: NSNotification) {
-        if !cameraUnavailableLabel.isHidden {
+        DispatchQueue.main.async {
+            guard !self.cameraUnavailableLabel.isHidden else {
+                return
+            }
             UIView.animate(withDuration: 0.25, animations: {
                 self.cameraUnavailableLabel.alpha = 0
             }, completion: { _ in

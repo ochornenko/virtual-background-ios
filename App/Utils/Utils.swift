@@ -128,8 +128,8 @@ public func resizeCGImageToFill(_ inputCGImage: CGImage, targetWidth: Int, targe
     let newWidth = Int(CGFloat(inputCGImage.width) * scaleFactor)
     let newHeight = Int(CGFloat(inputCGImage.height) * scaleFactor)
     
-    // Ensure a valid color space
-    let colorSpace = inputCGImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+    // The source color space may be grayscale, CMYK or indexed, none of which support an 8-bit RGBA bitmap context
+    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
     
     // Use a compatible bitmap info
     let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
