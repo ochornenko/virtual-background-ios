@@ -26,26 +26,24 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         var height: Int32 = 0
     }
     
-    private var pixelData: [UInt8]
     private let backgroundTextureLock = NSLock()
     private var _backgroundTexture: MTLTexture?
     private var backgroundTexture: MTLTexture? {
         get { backgroundTextureLock.withLock { _backgroundTexture } }
         set { backgroundTextureLock.withLock { _backgroundTexture = newValue } }
     }
-    private var outputTexture: MTLTexture?
-    private var segmentationMaskBuffer: MTLBuffer?
-    private var segmentationWidth = 513
-    private var segmentationHeight = 513
-    private var inputCameraTexture: MTLTexture?
+    private let segmentationWidth = 513
+    private let segmentationHeight = 513
+    private let segmentationMaskBuffer: MTLBuffer
+    private let segmentationPixelBufferPool: CVPixelBufferPool
+    private let outputPixelBufferPool: CVPixelBufferPool
     
-    private var textureCache: CVMetalTextureCache?
-    private var commandQueue: MTLCommandQueue
-    private var computePipelineState: MTLComputePipelineState
-    private var device: MTLDevice
+    private let textureCache: CVMetalTextureCache
+    private let commandQueue: MTLCommandQueue
+    private let computePipelineState: MTLComputePipelineState
+    private let device: MTLDevice
     private let model: DeepLabV3?
     
-    private let bytesPerPixel = 4
     private let videoSize = CGSize(width: 720, height: 1280)
     
     private lazy var textureLoader: MTKTextureLoader = {
@@ -99,27 +97,27 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         computePipelineState = cps
         
         // Initialize the cache to convert the pixel buffer into a Metal texture.
-        var textCache: CVMetalTextureCache?
-        if CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, metalDevice, nil, &textCache) != kCVReturnSuccess {
+        var cache: CVMetalTextureCache?
+        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, metalDevice, nil, &cache) == kCVReturnSuccess,
+              let cache = cache else {
             Log.error("Unable to allocate texture cache.")
             return nil
-        } else {
-            textureCache = textCache!
         }
+        textureCache = cache
         
-        let textureDescriptor = MTLTextureDescriptor()
-        textureDescriptor.pixelFormat = .bgra8Unorm
-        textureDescriptor.width = Int(videoSize.width)
-        textureDescriptor.height = Int(videoSize.height)
-        textureDescriptor.usage = [.shaderWrite, .shaderRead]
-        
-        outputTexture = self.device.makeTexture(descriptor: textureDescriptor)
-        if outputTexture == nil {
-            Log.error("Failed to create metal output texture")
+        guard let maskBuffer = metalDevice.makeBuffer(length: segmentationWidth * segmentationHeight * MemoryLayout<Int32>.stride,
+                                                      options: .storageModeShared) else {
+            Log.error("Failed to create segmentation mask buffer")
             return nil
         }
+        segmentationMaskBuffer = maskBuffer
         
-        pixelData = [UInt8](repeating: 0, count: Int(videoSize.width * videoSize.height * 4))
+        guard let segmentationPool = makePixelBufferPool(width: segmentationWidth, height: segmentationHeight),
+              let outputPool = makePixelBufferPool(width: Int(videoSize.width), height: Int(videoSize.height)) else {
+            return nil
+        }
+        segmentationPixelBufferPool = segmentationPool
+        outputPixelBufferPool = outputPool
     }
     
     func process(_ framePixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
@@ -127,47 +125,21 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
             return framePixelBuffer
         }
         
-        guard let resizedInput = resizePixelBuffer(framePixelBuffer, width: segmentationWidth, height: segmentationHeight),
-              let output = try? model?.prediction(image: resizedInput) else {
+        guard let model = model,
+              let segmentationInput = makePixelBuffer(from: segmentationPixelBufferPool),
+              resizePixelBuffer(framePixelBuffer, into: segmentationInput),
+              let output = try? model.prediction(image: segmentationInput) else {
             return nil
         }
         
-        segmentationMaskBuffer = self.device.makeBuffer(length: segmentationHeight * segmentationWidth * MemoryLayout<Int32>.stride)
+        memcpy(segmentationMaskBuffer.contents(), output.semanticPredictions.dataPointer, segmentationMaskBuffer.length)
         
-        if let buffer = self.segmentationMaskBuffer {
-            memcpy(buffer.contents(), output.semanticPredictions.dataPointer, buffer.length)
-        }
-        
-        guard let targetTexture = render(pixelBuffer: framePixelBuffer, backgroundTexture: backgroundTexture) else {
+        guard let outputPixelBuffer = makePixelBuffer(from: outputPixelBufferPool),
+              render(pixelBuffer: framePixelBuffer, backgroundTexture: backgroundTexture, into: outputPixelBuffer) else {
             return nil
         }
         
-        var pixelBuffer: CVPixelBuffer?
-        let bytesPerRow = bytesPerPixel * targetTexture.width
-        let region = MTLRegionMake2D(0, 0, targetTexture.width, targetTexture.height)
-        targetTexture.getBytes(&pixelData, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
-        
-        let status = CVPixelBufferCreate(kCFAllocatorDefault,
-                                         Int(videoSize.width),
-                                         Int(videoSize.height),
-                                         kCVPixelFormatType_32BGRA,
-                                         [kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary,
-                                         &pixelBuffer)
-        
-        guard status == kCVReturnSuccess, let pixelBuffer = pixelBuffer else {
-            Log.error("Failed to create pixel buffer \(status)")
-            return nil
-        }
-        
-        let flags = CVPixelBufferLockFlags(rawValue: 0)
-        
-        CVPixelBufferLockBaseAddress(pixelBuffer, flags)
-        
-        memcpy(CVPixelBufferGetBaseAddress(pixelBuffer), pixelData, Int(videoSize.height) * bytesPerRow)
-        
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, flags)
-        
-        return pixelBuffer
+        return outputPixelBuffer
     }
     
     func applyBackgroundImage(_ image: CGImage) {
@@ -176,28 +148,29 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
     }
     
-    private func render(pixelBuffer: CVPixelBuffer?, backgroundTexture: MTLTexture) -> MTLTexture? {
+    private func render(pixelBuffer: CVPixelBuffer, backgroundTexture: MTLTexture, into outputPixelBuffer: CVPixelBuffer) -> Bool {
+        guard let inputCVTexture = makeMetalTexture(from: pixelBuffer, usage: .shaderRead),
+              let inputTexture = CVMetalTextureGetTexture(inputCVTexture),
+              let outputCVTexture = makeMetalTexture(from: outputPixelBuffer, usage: .shaderWrite),
+              let outputTexture = CVMetalTextureGetTexture(outputCVTexture) else {
+            return false
+        }
+        
         // Create a command buffer and compute command encoder.
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            return nil
+            return false
         }
         
         // Set the background texture for the compute shader.
         computeCommandEncoder.setTexture(backgroundTexture, index: 0)
+        computeCommandEncoder.setTexture(inputTexture, index: 1)
         
-        if let pixelBuffer = pixelBuffer, let inputTexture = makeTextureFromCVPixelBuffer(pixelBuffer: pixelBuffer) {
-            inputCameraTexture = inputTexture
-            computeCommandEncoder.setTexture(inputTexture, index: 1)
-        }
-        
-        if let maskBuffer = segmentationMaskBuffer {
-            var params = MixParams()
-            params.width = Int32(segmentationWidth)
-            params.height = Int32(segmentationHeight)
-            computeCommandEncoder.setBuffer(maskBuffer, offset: 0, index: 0)
-            computeCommandEncoder.setBytes(&params, length: MemoryLayout<MixParams>.size, index: 1)
-        }
+        var params = MixParams()
+        params.width = Int32(segmentationWidth)
+        params.height = Int32(segmentationHeight)
+        computeCommandEncoder.setBuffer(segmentationMaskBuffer, offset: 0, index: 0)
+        computeCommandEncoder.setBytes(&params, length: MemoryLayout<MixParams>.size, index: 1)
         
         computeCommandEncoder.setTexture(outputTexture, index: 2)
         
@@ -215,7 +188,15 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
-        return outputTexture
+        // The CVMetalTextures must stay alive until the GPU has finished with their MTLTextures
+        withExtendedLifetime(inputCVTexture) {}
+        withExtendedLifetime(outputCVTexture) {}
+        
+        guard commandBuffer.status == .completed else {
+            Log.error("Mixer command buffer failed: \(String(describing: commandBuffer.error))")
+            return false
+        }
+        return true
     }
     
     private func loadTexture(image: CGImage) -> MTLTexture? {
@@ -230,21 +211,22 @@ class CameraVirtualBackgroundProcessor: CameraProcessor {
         }
     }
     
-    private func makeTextureFromCVPixelBuffer(pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+    /// Wraps the pixel buffer's memory in a Metal texture without copying it.
+    private func makeMetalTexture(from pixelBuffer: CVPixelBuffer, usage: MTLTextureUsage) -> CVMetalTexture? {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+        let attributes = [kCVMetalTextureUsage as String: usage.rawValue] as CFDictionary
         
-        // Create a Metal texture from the image buffer.
         var cvTextureOut: CVMetalTexture?
-        CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, textureCache!, pixelBuffer, nil, .bgra8Unorm, width, height, 0, &cvTextureOut)
-        guard let cvTexture = cvTextureOut, let texture = CVMetalTextureGetTexture(cvTexture) else {
+        CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, textureCache, pixelBuffer, attributes, .bgra8Unorm, width, height, 0, &cvTextureOut)
+        guard let cvTexture = cvTextureOut else {
             Log.error("Video mixer failed to create texture")
             
-            CVMetalTextureCacheFlush(textureCache!, 0)
+            CVMetalTextureCacheFlush(textureCache, 0)
             return nil
         }
         
-        return texture
+        return cvTexture
     }
 }
 

@@ -16,98 +16,86 @@ import Accelerate
 import MetalKit
 
 /**
- Resizes a CVPixelBuffer to the specified width and height without cropping.
- This function acts as a wrapper around `resizePixelBuffer`, resizing the entire pixel buffer while maintaining efficiency.
+ Creates a pool of Metal-compatible BGRA pixel buffers so frames can reuse memory instead of allocating it.
  
  - Parameters:
- - pixelBuffer: The source CVPixelBuffer.
- - width: The target width for the resized pixel buffer.
- - height: The target height for the resized pixel buffer.
- - Returns: A new resized CVPixelBuffer, or `nil` if resizing fails.
+ - width: The width of the pixel buffers in the pool.
+ - height: The height of the pixel buffers in the pool.
+ - Returns: A new CVPixelBufferPool, or `nil` if creation fails.
  */
-public func resizePixelBuffer(_ pixelBuffer: CVPixelBuffer,
-                              width: Int, height: Int) -> CVPixelBuffer? {
-    return resizePixelBuffer(pixelBuffer, cropX: 0, cropY: 0,
-                             cropWidth: CVPixelBufferGetWidth(pixelBuffer),
-                             cropHeight: CVPixelBufferGetHeight(pixelBuffer),
-                             scaleWidth: width, scaleHeight: height)
+public func makePixelBufferPool(width: Int, height: Int) -> CVPixelBufferPool? {
+    let attributes: [String: Any] = [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height,
+        kCVPixelBufferMetalCompatibilityKey as String: true,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+    ]
+    var pool: CVPixelBufferPool?
+    guard CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool) == kCVReturnSuccess else {
+        Log.error("Error: could not create pixel buffer pool")
+        return nil
+    }
+    return pool
 }
 
 /**
- Crops and resizes a CVPixelBuffer to the specified dimensions.
+ Takes a pixel buffer from the pool, allocating a new one only if all pooled buffers are in use.
  
- This function first extracts a cropped region from the source pixel buffer and then scales it to the target size.
+ - Parameter pool: The pool to take the pixel buffer from.
+ - Returns: A pixel buffer, or `nil` if allocation fails.
+ */
+public func makePixelBuffer(from pool: CVPixelBufferPool) -> CVPixelBuffer? {
+    var pixelBuffer: CVPixelBuffer?
+    guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer) == kCVReturnSuccess else {
+        Log.error("Error: could not create pixel buffer from pool")
+        return nil
+    }
+    return pixelBuffer
+}
+
+/**
+ Scales the entire source pixel buffer into the destination pixel buffer without cropping.
+ Both pixel buffers must use a 4-channel, 8-bit pixel format such as BGRA.
  It uses the Accelerate framework's vImage API for efficient resizing.
  
  - Parameters:
  - srcPixelBuffer: The source CVPixelBuffer.
- - cropX: The x-coordinate of the top-left corner of the cropping region.
- - cropY: The y-coordinate of the top-left corner of the cropping region.
- - cropWidth: The width of the cropping region.
- - cropHeight: The height of the cropping region.
- - scaleWidth: The desired output width after resizing.
- - scaleHeight: The desired output height after resizing.
- - Returns: A new resized CVPixelBuffer, or `nil` if an error occurs.
+ - dstPixelBuffer: The CVPixelBuffer to write the scaled image into.
+ - Returns: `true` if scaling succeeded.
  */
-public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer,
-                              cropX: Int,
-                              cropY: Int,
-                              cropWidth: Int,
-                              cropHeight: Int,
-                              scaleWidth: Int,
-                              scaleHeight: Int) -> CVPixelBuffer? {
-    let flags = CVPixelBufferLockFlags(rawValue: 0)
-    guard kCVReturnSuccess == CVPixelBufferLockBaseAddress(srcPixelBuffer, flags) else {
-        return nil
+public func resizePixelBuffer(_ srcPixelBuffer: CVPixelBuffer, into dstPixelBuffer: CVPixelBuffer) -> Bool {
+    guard CVPixelBufferLockBaseAddress(srcPixelBuffer, .readOnly) == kCVReturnSuccess else {
+        return false
     }
-    defer { CVPixelBufferUnlockBaseAddress(srcPixelBuffer, flags) }
+    defer { CVPixelBufferUnlockBaseAddress(srcPixelBuffer, .readOnly) }
     
-    guard let srcData = CVPixelBufferGetBaseAddress(srcPixelBuffer) else {
+    guard CVPixelBufferLockBaseAddress(dstPixelBuffer, []) == kCVReturnSuccess else {
+        return false
+    }
+    defer { CVPixelBufferUnlockBaseAddress(dstPixelBuffer, []) }
+    
+    guard let srcData = CVPixelBufferGetBaseAddress(srcPixelBuffer),
+          let dstData = CVPixelBufferGetBaseAddress(dstPixelBuffer) else {
         Log.error("Error: could not get pixel buffer base address")
-        return nil
+        return false
     }
-    let srcBytesPerRow = CVPixelBufferGetBytesPerRow(srcPixelBuffer)
-    let offset = cropY*srcBytesPerRow + cropX * 4
-    var srcBuffer = vImage_Buffer(data: srcData.advanced(by: offset),
-                                  height: vImagePixelCount(cropHeight),
-                                  width: vImagePixelCount(cropWidth),
-                                  rowBytes: srcBytesPerRow)
     
-    let destBytesPerRow = scaleWidth * 4
-    guard let destData = malloc(scaleHeight*destBytesPerRow) else {
-        Log.error("Error: out of memory")
-        return nil
-    }
-    var destBuffer = vImage_Buffer(data: destData,
-                                   height: vImagePixelCount(scaleHeight),
-                                   width: vImagePixelCount(scaleWidth),
-                                   rowBytes: destBytesPerRow)
+    var srcBuffer = vImage_Buffer(data: srcData,
+                                  height: vImagePixelCount(CVPixelBufferGetHeight(srcPixelBuffer)),
+                                  width: vImagePixelCount(CVPixelBufferGetWidth(srcPixelBuffer)),
+                                  rowBytes: CVPixelBufferGetBytesPerRow(srcPixelBuffer))
+    var dstBuffer = vImage_Buffer(data: dstData,
+                                  height: vImagePixelCount(CVPixelBufferGetHeight(dstPixelBuffer)),
+                                  width: vImagePixelCount(CVPixelBufferGetWidth(dstPixelBuffer)),
+                                  rowBytes: CVPixelBufferGetBytesPerRow(dstPixelBuffer))
     
-    let error = vImageScale_ARGB8888(&srcBuffer, &destBuffer, nil, vImage_Flags(0))
-    if error != kvImageNoError {
+    let error = vImageScale_ARGB8888(&srcBuffer, &dstBuffer, nil, vImage_Flags(kvImageNoFlags))
+    guard error == kvImageNoError else {
         Log.error("Error: \(error)")
-        free(destData)
-        return nil
+        return false
     }
-    
-    let releaseCallback: CVPixelBufferReleaseBytesCallback = { _, ptr in
-        if let ptr = ptr {
-            free(UnsafeMutableRawPointer(mutating: ptr))
-        }
-    }
-    
-    let pixelFormat = CVPixelBufferGetPixelFormatType(srcPixelBuffer)
-    var dstPixelBuffer: CVPixelBuffer?
-    let status = CVPixelBufferCreateWithBytes(nil, scaleWidth, scaleHeight,
-                                              pixelFormat, destData,
-                                              destBytesPerRow, releaseCallback,
-                                              nil, nil, &dstPixelBuffer)
-    if status != kCVReturnSuccess {
-        Log.error("Error: could not create new pixel buffer")
-        free(destData)
-        return nil
-    }
-    return dstPixelBuffer
+    return true
 }
 
 /**
