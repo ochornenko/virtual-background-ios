@@ -11,7 +11,7 @@
 
 ## Introduction
 
-This project leverages Apple's Vision person segmentation to replace the background in real-time on iOS devices. Using an on-device deep learning model, it accurately detects and segments the human figure, allowing users to apply custom virtual backgrounds. The segmentation mask is then refined along the edges using the camera image itself, so the outline follows the person closely. Optimized for performance, it ensures smooth processing on mobile devices.
+This project leverages Apple's Vision person segmentation to replace the background in real-time on iOS devices. Using an on-device deep learning model, it accurately detects and segments the human figure, allowing users to apply custom virtual backgrounds. The soft segmentation mask blends the person into the background with natural-looking edges. Optimized for performance, it ensures smooth processing on mobile devices.
 
 ## Class Diagram
 
@@ -157,7 +157,7 @@ Here’s how it works:
 
 4. **Rendering the Frame**: The `render` method wraps the camera frame, the segmentation mask, and an output pixel buffer taken from the pool as `Metal` textures, dispatches the `mixer` compute kernel, and waits for the GPU to finish. The background texture is guarded by a lock, because it's set from the main thread when the user picks an image while frames are processed on the camera's data output queue.
 
-5. **Blending and Refining the Edges**: The compute shader in `Mixer.metal` reads the mask value at each pixel to get the person coverage. Pixels that are clearly person or clearly background are used as they are. Along the edge, where the mask is uncertain, the shader refines the coverage with a joint bilateral filter guided by the camera image: it samples a small neighbourhood of pixels and gives more weight to neighbours that are both close by and similar in color to the current pixel. This makes the edge snap to where the color actually changes in the camera image instead of following the lower-resolution mask, and a final contrast step tightens the transition. The camera pixel and the background are then blended by the resulting coverage. The tuning parameters (`REFINE_RADIUS`, `COLOR_SIGMA`, `EDGE_LOW`, `EDGE_HIGH`, and others) are constants at the top of the shader.
+5. **Blending the Frame**: The compute shader in `Mixer.metal` samples the mask at each pixel's center to get the person coverage. Because the mask is lower resolution than the frame, it's sampled with linear filtering, which keeps the edges soft instead of blocky. The camera pixel and the background are then blended by that coverage, so pixels fully covered by a person keep the camera image, background pixels show the virtual background, and pixels along the edge, such as hair, mix the two.
 
 6. **Displaying the Frame**: Because the shader writes directly into the output pixel buffer, no copy is needed afterwards. The `process` method returns that pixel buffer for displaying on the screen using the `CameraPreview` class, the process of which was explained in the Camera Preview Rendering section.
 
